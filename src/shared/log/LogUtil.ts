@@ -122,6 +122,7 @@ export function keyPresent(log: Log, search: string[]): boolean {
   return found;
 }
 
+
 /** Adds a prefix to a log key. */
 export function applyKeyPrefix(prefix: string, key: string): string {
   if (prefix.length === 0) {
