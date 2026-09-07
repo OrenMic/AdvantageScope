@@ -6,7 +6,7 @@
 // at the root directory of this project.
 
 import { CoordinateSystem } from "../AdvantageScopeAssets";
-import { AnnotatedPose3d, SwerveState } from "../geometry";
+import { AnnotatedPose3d, Shape2d, SwerveState } from "../geometry";
 import { MechanismState } from "../log/LogUtil";
 import Field3dRendererImpl from "./Field3dRendererImpl";
 import TabRenderer from "./TabRenderer";
@@ -132,6 +132,7 @@ export type Field3dRendererCommand_AnyObj =
   | Field3dRendererCommand_GhostObj
   | Field3dRendererCommand_GamePieceObj
   | Field3dRendererCommand_TrajectoryObj
+  | Field3dRendererCommand_ZoneObj
   | Field3dRendererCommand_HeatmapObj
   | Field3dRendererCommand_AprilTagObj
   | Field3dRendererCommand_AprilTagBuiltInObj
@@ -173,6 +174,14 @@ export type Field3dRendererCommand_TrajectoryObj = {
   color: string;
   size: string;
   poses: AnnotatedPose3d[];
+};
+
+export type Field3dRendererCommand_ZoneObj = {
+  type: "zone";
+  color: string;
+  size: string;
+  style: "outline" | "fill" | "both";
+  shapes: Shape2d[];
 };
 
 export type Field3dRendererCommand_HeatmapObj = {

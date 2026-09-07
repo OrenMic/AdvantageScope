@@ -5,7 +5,7 @@
 // license that can be found in the LICENSE file
 // at the root directory of this project.
 
-import { AnnotatedPose2d, Pose2d, SwerveState, Translation2d } from "../geometry";
+import { AnnotatedPose2d, Pose2d, Shape2d, SwerveState, Translation2d } from "../geometry";
 import { Units } from "../units";
 import { scaleValue, transformPx } from "../util";
 import Heatmap from "./Heatmap";
@@ -280,11 +280,65 @@ export default class Field2dRenderer implements TabRenderer {
     }
 
     // Draw objects
-    const renderingOrder = ["trajectory", "robot", "ghost", "arrow"];
+    const renderingOrder = ["zone", "trajectory", "robot", "ghost", "arrow"];
     command.objects
       .toSorted((objA, objB) => renderingOrder.indexOf(objA.type) - renderingOrder.indexOf(objB.type))
       .forEach((object) => {
         switch (object.type) {
+          case "zone": {
+            const drawFill = object.style === "fill" || object.style === "both";
+            const drawOutline = object.style === "outline" || object.style === "both";
+            context.fillStyle = object.color;
+            context.strokeStyle = object.color;
+            context.lineWidth = 2 * pixelsPerInch * (object.size === "bold" ? 3 : 1);
+            context.lineCap = "round";
+            context.lineJoin = "round";
+            object.shapes.forEach((shape) => {
+              let localPoints: [number, number][] = [];
+              if (shape.shape === "rectangle") {
+                localPoints = [
+                  [shape.xRadius, shape.yRadius],
+                  [shape.xRadius, -shape.yRadius],
+                  [-shape.xRadius, -shape.yRadius],
+                  [-shape.xRadius, shape.yRadius]
+                ];
+              } else {
+                const segments = 48;
+                for (let i = 0; i < segments; i++) {
+                  const angle = (i / segments) * Math.PI * 2;
+                  localPoints.push([Math.cos(angle) * shape.xRadius, Math.sin(angle) * shape.yRadius]);
+                }
+              }
+              // Convert local meters → field meters → pixels (handles non-uniform scale + Y flip)
+              let firstPoint = true;
+              context.beginPath();
+              localPoints.forEach((local) => {
+                const c = Math.cos(shape.center.rotation);
+                const s = Math.sin(shape.center.rotation);
+                const fieldTranslation: Translation2d = [
+                  shape.center.translation[0] + local[0] * c - local[1] * s,
+                  shape.center.translation[1] + local[0] * s + local[1] * c
+                ];
+                const point = calcCoordinates(fieldTranslation);
+                if (firstPoint) {
+                  context.moveTo(...point);
+                  firstPoint = false;
+                } else {
+                  context.lineTo(...point);
+                }
+              });
+              context.closePath();
+              if (drawFill) {
+                context.globalAlpha = 0.25;
+                context.fill();
+                context.globalAlpha = 1;
+              }
+              if (drawOutline) {
+                context.stroke();
+              }
+            });
+            break;
+          }
           case "trajectory":
             context.strokeStyle = object.color;
             context.lineWidth = 2 * pixelsPerInch * (object.size === "bold" ? 3 : 1);
@@ -431,6 +485,7 @@ export type Field2dRendererCommand_AnyObj =
   | Field2dRendererCommand_RobotObj
   | Field2dRendererCommand_GhostObj
   | Field2dRendererCommand_TrajectoryObj
+  | Field2dRendererCommand_ZoneObj
   | Field2dRendererCommand_HeatmapObj
   | Field2dRendererCommand_ArrowObj;
 
@@ -462,6 +517,14 @@ export type Field2dRendererCommand_TrajectoryObj = {
   color: string;
   size: string;
   poses: AnnotatedPose2d[];
+};
+
+export type Field2dRendererCommand_ZoneObj = {
+  type: "zone";
+  color: string;
+  size: string;
+  style: "outline" | "fill" | "both";
+  shapes: Shape2d[];
 };
 
 export type Field2dRendererCommand_HeatmapObj = {

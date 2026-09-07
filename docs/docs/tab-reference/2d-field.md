@@ -38,7 +38,7 @@ To see a full list of supported object types, click the `?` icon. This list also
 
 ## Data Format
 
-Geometry data should be published as a byte-encoded struct or protobuf. Various 2D and 3D geometry types are supported, including `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d`, and more.
+Geometry data should be published as a byte-encoded struct or protobuf. Various 2D and 3D geometry types are supported, including `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d`, `Rectangle2d`, `Ellipse2d`, and more.
 
 :::warning
 The legacy number array format for geometry data is now deprecated. See [here](/overview/legacy-formats) for details.

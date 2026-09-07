@@ -30,6 +30,7 @@ import GamePieceManager from "../shared/renderers/field3d/objectManagers/GamePie
 import HeatmapManager from "../shared/renderers/field3d/objectManagers/HeatmapManager";
 import RobotManager from "../shared/renderers/field3d/objectManagers/RobotManager";
 import TrajectoryManager from "../shared/renderers/field3d/objectManagers/TrajectoryManager";
+import ZoneManager from "../shared/renderers/field3d/objectManagers/ZoneManager";
 import { Units } from "../shared/units";
 import { clampValue, wrapRadians } from "../shared/util";
 import XRCamera from "./XRCamera";
@@ -263,6 +264,9 @@ export default class XRRenderer {
         break;
       case "trajectory":
         manager = new TrajectoryManager(...args);
+        break;
+      case "zone":
+        manager = new ZoneManager(...args);
         break;
       case "heatmap":
         manager = new HeatmapManager(

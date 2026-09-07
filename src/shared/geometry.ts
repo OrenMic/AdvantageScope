@@ -26,6 +26,14 @@ export const Pose2dZero: Pose2d = {
   rotation: Rotation2dZero
 };
 
+/** Field zone from Rectangle2d or Ellipse2d. Radii are half-extents in meters. */
+export type Shape2d = {
+  shape: "rectangle" | "ellipse";
+  center: Pose2d;
+  xRadius: number;
+  yRadius: number;
+};
+
 export type Translation3d = [number, number, number]; // meters (x, y, z)
 export type Rotation3d = [number, number, number, number]; // radians (w, x, y, z)
 export type Pose3d = {
@@ -743,4 +751,69 @@ export function grabChassisSpeeds(log: Log, key: string, timestamp: number, uuid
     vy: getOrDefault(log, key + "/vy", LoggableType.Number, timestamp, 0, uuid),
     omega: getOrDefault(log, key + "/omega", LoggableType.Number, timestamp, 0, uuid)
   };
+}
+
+export function grabShapesAuto(log: Log, key: string, logType: string, timestamp: number, uuid?: string): Shape2d[] {
+  switch (logType) {
+    case "Rectangle2d":
+      return grabRectangle2d(log, key, timestamp, uuid);
+    case "Rectangle2d[]":
+      return grabRectangle2dArray(log, key, timestamp, uuid);
+    case "Ellipse2d":
+      return grabEllipse2d(log, key, timestamp, uuid);
+    case "Ellipse2d[]":
+      return grabEllipse2dArray(log, key, timestamp, uuid);
+    default:
+      return [];
+  }
+}
+
+export function grabRectangle2d(log: Log, key: string, timestamp: number, uuid?: string): Shape2d[] {
+  return [
+    {
+      shape: "rectangle",
+      center: {
+        translation: [
+          getOrDefault(log, key + "/center/translation/x", LoggableType.Number, timestamp, 0, uuid),
+          getOrDefault(log, key + "/center/translation/y", LoggableType.Number, timestamp, 0, uuid)
+        ],
+        rotation: getOrDefault(log, key + "/center/rotation/value", LoggableType.Number, timestamp, 0, uuid)
+      },
+      // WPILib xWidth/yWidth are full extents; store half-extents for rendering
+      xRadius: getOrDefault(log, key + "/xWidth", LoggableType.Number, timestamp, 0, uuid) / 2,
+      yRadius: getOrDefault(log, key + "/yWidth", LoggableType.Number, timestamp, 0, uuid) / 2
+    }
+  ];
+}
+
+export function grabEllipse2d(log: Log, key: string, timestamp: number, uuid?: string): Shape2d[] {
+  return [
+    {
+      shape: "ellipse",
+      center: {
+        translation: [
+          getOrDefault(log, key + "/center/translation/x", LoggableType.Number, timestamp, 0, uuid),
+          getOrDefault(log, key + "/center/translation/y", LoggableType.Number, timestamp, 0, uuid)
+        ],
+        rotation: getOrDefault(log, key + "/center/rotation/value", LoggableType.Number, timestamp, 0, uuid)
+      },
+      // WPILib xSemiAxis/ySemiAxis are already half-extents
+      xRadius: getOrDefault(log, key + "/xSemiAxis", LoggableType.Number, timestamp, 0, uuid),
+      yRadius: getOrDefault(log, key + "/ySemiAxis", LoggableType.Number, timestamp, 0, uuid)
+    }
+  ];
+}
+
+export function grabRectangle2dArray(log: Log, key: string, timestamp: number, uuid?: string): Shape2d[] {
+  return indexArray(getOrDefault(log, key + "/length", LoggableType.Number, timestamp, 0, uuid)).reduce(
+    (array, index) => array.concat(grabRectangle2d(log, key + "/" + index.toString(), timestamp, uuid)),
+    [] as Shape2d[]
+  );
+}
+
+export function grabEllipse2dArray(log: Log, key: string, timestamp: number, uuid?: string): Shape2d[] {
+  return indexArray(getOrDefault(log, key + "/length", LoggableType.Number, timestamp, 0, uuid)).reduce(
+    (array, index) => array.concat(grabEllipse2d(log, key + "/" + index.toString(), timestamp, uuid)),
+    [] as Shape2d[]
+  );
 }

@@ -12,9 +12,11 @@ import {
   APRIL_TAG_16H5_COUNT,
   APRIL_TAG_36H11_COUNT,
   AnnotatedPose3d,
+  Shape2d,
   SwerveState,
   grabHeatmapData,
   grabPosesAuto,
+  grabShapesAuto,
   grabSwerveStates,
   rotationSequenceToQuaternion
 } from "../../shared/geometry";
@@ -260,6 +262,25 @@ export default class Field3dController implements TabController {
       ) {
         i++;
         children.push(sources[i]);
+      }
+
+      // Zones use Rectangle2d/Ellipse2d structs rather than poses
+      if (source.type === "zone") {
+        let shapes: Shape2d[] = [];
+        if (time !== null) {
+          shapes = grabShapesAuto(window.log, source.logKey, source.logType, time, this.UUID);
+        }
+        let styleRaw = source.options.style;
+        let style: "outline" | "fill" | "both" =
+          styleRaw === "outline" || styleRaw === "fill" || styleRaw === "both" ? styleRaw : "both";
+        objects.push({
+          type: "zone",
+          color: source.options.color,
+          size: source.options.size,
+          style: style,
+          shapes: shapes
+        });
+        continue;
       }
 
       // Get pose data

@@ -91,6 +91,7 @@ The download window now supports saving logs that are stored in subfolders. Each
 
 Several new visualization options are supported on the 🗺️ [2D Field](/tab-reference/2d-field) and 👀 [3D Field](/tab-reference/3d-field):
 
+- WPILib `Rectangle2d` and `Ellipse2d` structs can be visualized as field zones, with configurable outline and/or fill.
 - A wider variety of robot bumper colors are now available on the 2D field, and each object can be configured with its own color. This enables greater flexibility when combining ghosts with multiple robot objects.
 - When [visualizing 2D mechanisms on the 3D field](/tab-reference/3d-field/#2d-mechanisms), mechanisms can now be placed on the YZ plane in addition to the XZ plane. This enables easier visualization of complex mechanisms with movement in multiple axes.
 - The 3D field now supports optional anti-aliasing to improve the quality of rendered edges.

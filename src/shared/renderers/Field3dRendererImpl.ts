@@ -28,6 +28,7 @@ import GamePieceManager from "./field3d/objectManagers/GamePieceManager";
 import HeatmapManager from "./field3d/objectManagers/HeatmapManager";
 import RobotManager from "./field3d/objectManagers/RobotManager";
 import TrajectoryManager from "./field3d/objectManagers/TrajectoryManager";
+import ZoneManager from "./field3d/objectManagers/ZoneManager";
 
 export default class Field3dRendererImpl implements TabRenderer {
   private LOWER_POWER_MAX_FPS = 30;
@@ -448,6 +449,9 @@ export default class Field3dRendererImpl implements TabRenderer {
         break;
       case "trajectory":
         manager = new TrajectoryManager(...args);
+        break;
+      case "zone":
+        manager = new ZoneManager(...args);
         break;
       case "heatmap":
         manager = new HeatmapManager(

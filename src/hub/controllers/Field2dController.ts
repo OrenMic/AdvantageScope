@@ -9,12 +9,14 @@ import { SourceListItemState, SourceListState } from "../../shared/SourceListCon
 import {
   AnnotatedPose2d,
   AnnotatedPose3d,
+  Shape2d,
   SwerveState,
   Translation2d,
   annotatedPose3dTo2d,
   convertFromCoordinateSystem,
   grabHeatmapData,
   grabPosesAuto,
+  grabShapesAuto,
   grabSwerveStates,
   rotation3dTo2d
 } from "../../shared/geometry";
@@ -244,6 +246,37 @@ export default class Field2dController implements TabController {
       ) {
         i++;
         children.push(sources[i]);
+      }
+
+      // Zones use Rectangle2d/Ellipse2d structs rather than poses
+      if (source.type === "zone") {
+        let shapes: Shape2d[] = [];
+        if (time !== null) {
+          shapes = grabShapesAuto(window.log, source.logKey, source.logType, time, this.UUID);
+          if (fieldData !== undefined) {
+            shapes = shapes.map((shape) => ({
+              ...shape,
+              center: convertFromCoordinateSystem(
+                shape.center,
+                coordinateSystem,
+                isRedAlliance ? "red" : "blue",
+                fieldWidth,
+                fieldHeight
+              )
+            }));
+          }
+        }
+        let styleRaw = source.options.style;
+        let style: "outline" | "fill" | "both" =
+          styleRaw === "outline" || styleRaw === "fill" || styleRaw === "both" ? styleRaw : "both";
+        objects.push({
+          type: "zone",
+          color: source.options.color,
+          size: source.options.size,
+          style: style,
+          shapes: shapes
+        });
+        continue;
       }
 
       // Get pose data

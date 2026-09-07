@@ -519,6 +519,43 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Translation3d"
     },
     {
+      key: "zone",
+      display: "Zone",
+      symbol: "rectangle.dashed",
+      showInTypeName: true,
+      color: "color",
+      sourceTypes: ["Rectangle2d", "Ellipse2d", "Rectangle2d[]", "Ellipse2d[]"],
+      showDocs: true,
+      options: [
+        {
+          key: "color",
+          display: "Color",
+          showInTypeName: false,
+          values: NeonColors
+        },
+        {
+          key: "style",
+          display: "Style",
+          showInTypeName: false,
+          values: [
+            { key: "both", display: "Outline & Fill" },
+            { key: "outline", display: "Outline" },
+            { key: "fill", display: "Fill" }
+          ]
+        },
+        {
+          key: "size",
+          display: "Thickness",
+          showInTypeName: false,
+          values: [
+            { key: "normal", display: "Normal" },
+            { key: "bold", display: "Bold" }
+          ]
+        }
+      ],
+      previewType: null
+    },
+    {
       key: "heatmap",
       display: "Heatmap",
       symbol: "map.fill",
