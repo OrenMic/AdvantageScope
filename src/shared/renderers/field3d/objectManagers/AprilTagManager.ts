@@ -6,7 +6,7 @@
 // at the root directory of this project.
 
 import * as THREE from "three";
-import { DISTRIBUTION, Distribution } from "../../../buildConstants";
+import { IS_LITE } from "../../../buildConstants";
 import { Units } from "../../../units";
 import { zfill } from "../../../util";
 import { Field3dRendererCommand_AprilTagObj } from "../../Field3dRenderer";
@@ -96,8 +96,8 @@ export default class AprilTagManager extends ObjectManager<Field3dRendererComman
         this.textureLoader.load(
           this.isXR
             ? `/apriltag?family=${object.variant.family}&name=${textureName}`
-            : DISTRIBUTION == Distribution.Lite
-            ? `www/textures/apriltag-${object.variant.family}/${textureName}.png`
+            : IS_LITE
+            ? `textures/apriltag-${object.variant.family}/${textureName}.png`
             : `../www/textures/apriltag-${object.variant.family}/${textureName}.png`,
           (texture) => {
             texture.minFilter = THREE.NearestFilter;

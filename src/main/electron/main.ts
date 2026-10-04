@@ -6,7 +6,6 @@
 // at the root directory of this project.
 
 import { parseREVLOG } from "@rev-robotics/revlog-converter";
-import { FileInfo, Client as FTPClient, FTPError } from "basic-ftp";
 import { hex } from "color-convert";
 import {
   app,
@@ -32,12 +31,13 @@ import jsonfile from "jsonfile";
 import net from "net";
 import os from "os";
 import path from "path";
-import { PNG } from "pngjs";
-import { Readable } from "stream";
+import { Client, FileEntry, Stats } from "ssh2";
+import { Readable, Writable } from "stream";
 import { AdvantageScopeAssets } from "../../shared/AdvantageScopeAssets";
 import ButtonRect from "../../shared/ButtonRect";
 import { ensureThemeContrast } from "../../shared/Colors";
 import ExportOptions from "../../shared/ExportOptions";
+import { Field2dCameraMode } from "../../shared/Field2dCameraMode";
 import LineGraphFilter from "../../shared/LineGraphFilter";
 import NamedMessage from "../../shared/NamedMessage";
 import Preferences, { DEFAULT_PREFS, getLiveModeName, LiveMode, mergePreferences } from "../../shared/Preferences";
@@ -45,17 +45,20 @@ import { SourceListConfig, SourceListItemState, SourceListTypeMemory } from "../
 import TabType, { getAllTabTypes, getDefaultTabTitle, getTabAccelerator, getTabIcon } from "../../shared/TabType";
 import { BUILD_DATE, COPYRIGHT, DISTRIBUTION, Distribution } from "../../shared/buildConstants";
 import { Units } from "../../shared/units";
-import { createUUID } from "../../shared/util";
+import { createUUID, formatDate } from "../../shared/util";
 import { GITHUB_REPOSITORY } from "../github";
 import {
   AKIT_PATH_INPUT,
   AKIT_PATH_INPUT_PERIOD,
   AKIT_PATH_OUTPUT,
   APP_VERSION,
+  DOWNLOAD_CONNECT_TIMEOUT_MS,
   DOWNLOAD_REFRESH_INTERVAL_MS,
   DOWNLOAD_RETRY_DELAY_MS,
-  DOWNLOAD_TIMEOUT_MS,
-  FRC_LOG_FOLDER,
+  DOWNLOAD_ROBORIO_PASSWORD,
+  DOWNLOAD_ROBORIO_USERNAME,
+  DOWNLOAD_SYSTEMCORE_PASSWORD,
+  DOWNLOAD_SYSTEMCORE_USERNAME,
   HUB_DEFAULT_HEIGHT,
   HUB_DEFAULT_WIDTH,
   PREFS_FILENAME,
@@ -109,7 +112,6 @@ let menuTemplate: (Electron.MenuItemConstructorOptions | Electron.MenuItem)[] | 
 
 let stateTracker = new StateTracker();
 let updateChecker = new UpdateChecker();
-let usingUsb = false; // Menu bar setting, bundled with other prefs for renderers
 let firstOpenPath: string | null = null; // Cache path to open immediately
 let advantageScopeAssets: AdvantageScopeAssets = {
   field2ds: [],
@@ -126,13 +128,14 @@ let rlogSocketTimeouts: { [id: number]: NodeJS.Timeout } = {};
 let rlogDataArrays: { [id: number]: Uint8Array } = {};
 
 // Download variables
-let downloadClient: FTPClient | null = null;
+let downloadClient: Client | null = null;
 let downloadRetryTimeout: NodeJS.Timeout | null = null;
 let downloadRefreshInterval: NodeJS.Timeout | null = null;
 let downloadAddress: string = "";
 let downloadPath: string = "";
 let downloadFileSizeCache: { [id: string]: number } = {};
-let downloadClientIsSaving = false;
+let downloadDevice: "systemcore" | "roborio" = "systemcore";
+let downloadAuthFailedOnce: boolean = false;
 
 // WINDOW MESSAGE HANDLING
 
@@ -155,7 +158,6 @@ function sendMessage(window: BrowserWindow, name: string, data?: any): boolean {
 /** Sends the current preferences to all windows (including USB menu bar setting) */
 function sendAllPreferences() {
   let data: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-  data.usb = usingUsb;
   nativeTheme.themeSource = data.theme;
   hubWindows.forEach((window) => {
     if (!window.isDestroyed()) {
@@ -181,8 +183,15 @@ function sendAllPreferences() {
         .submenu as Electron.MenuItemConstructorOptions[]
     )[0].label = autoString;
     (menuTemplate[0].submenu as Electron.MenuItemConstructorOptions[])[7].checked = data.userAssetsFolder !== null;
+    (menuTemplate[1].submenu as Electron.MenuItemConstructorOptions[])[7].checked =
+      data.systemcoreStaticAddress === "usb";
+    (menuTemplate[1].submenu as Electron.MenuItemConstructorOptions[])[8].checked =
+      data.systemcoreStaticAddress === "wifi";
     let menu = Menu.buildFromTemplate(menuTemplate);
     Menu.setApplicationMenu(menu);
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!hubWindows.includes(w)) w.setMenu(null);
+    });
   }
 }
 
@@ -273,7 +282,16 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
       });
       let newTypeMemoryStr = JSON.stringify(typeMemory);
       if (originalTypeMemoryStr !== newTypeMemoryStr) {
-        jsonfile.writeFileSync(TYPE_MEMORY_FILENAME, typeMemory);
+        await jsonfile.writeFile(TYPE_MEMORY_FILENAME, typeMemory);
+      }
+      break;
+
+    case "update-preferences":
+      {
+        let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+        mergePreferences(prefs, message.data);
+        jsonfile.writeFileSync(PREFS_FILENAME, prefs);
+        sendAllPreferences();
       }
       break;
 
@@ -285,21 +303,106 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
       shell.openExternal("https://github.com/" + GITHUB_REPOSITORY + "/issues/new/choose");
       break;
 
+    case "historical-start-raw":
+      {
+        const uuid: string = message.data.uuid;
+        const data: Uint8Array = message.data.data;
+        const extension: string = message.data.extension;
+
+        // Prevent path traversal
+        if (extension.includes("/") || extension.includes("\\") || extension.includes("..")) {
+          sendMessage(window, "historical-data", {
+            files: [null],
+            error: "Invalid log extension",
+            uuid: uuid
+          });
+          break;
+        }
+
+        if (extension === "revlog") {
+          let chunks: Buffer[] = [];
+          let writable = new Writable({
+            write(chunk, encoding, callback) {
+              chunks.push(chunk);
+              callback();
+            }
+          });
+          parseREVLOG(Buffer.from(data), writable)
+            .then(() => {
+              sendMessage(window, "historical-data", {
+                files: [Buffer.concat(chunks)],
+                error: null,
+                uuid: uuid
+              });
+            })
+            .catch((err: any) => {
+              sendMessage(window, "historical-data", {
+                files: [null],
+                error: err.message,
+                uuid: uuid
+              });
+            });
+          break;
+        }
+
+        let tempPath = path.join(app.getPath("temp"), "child_" + createUUID() + "." + extension);
+        fs.writeFile(tempPath, data, (err) => {
+          if (!err) {
+            handleHubMessage(window, {
+              name: "historical-start",
+              data: {
+                uuid: uuid,
+                path: tempPath,
+                deleteAfterRead: true
+              }
+            });
+          } else {
+            sendMessage(window, "historical-data", {
+              files: [null],
+              error: err.message,
+              uuid: uuid
+            });
+          }
+        });
+      }
+      break;
+
     case "historical-start":
       {
         // Record opened files
         const uuid: string = message.data.uuid;
         const logPath: string = message.data.path;
-        app.addRecentDocument(logPath);
-        fs.writeFile(AKIT_PATH_OUTPUT, logPath, () => {});
+        if (!message.data.deleteAfterRead) {
+          app.addRecentDocument(logPath);
+          // Writing this file is a supplemental task, so we don't need to block/ensure success
+          fs.writeFile(AKIT_PATH_OUTPUT, logPath, () => {});
+        }
 
         // Send data if all file reads finished
         let completedCount = 0;
         let targetCount = 0;
         let errorMessage: null | string = null;
         let hasHootNonPro = false;
+        let paths: string[] = typeof logPath === "string" ? [logPath] : logPath;
+        let pathsToRemove: string[] = [];
+        if (message.data.deleteAfterRead) {
+          pathsToRemove.push(...paths);
+        }
+
         let sendIfReady = () => {
           if (completedCount === targetCount) {
+            if (message.data.deleteAfterRead) {
+              paths.forEach((p) => {
+                if (p.endsWith(".dslog")) {
+                  let eventsPath = p.slice(0, p.length - 5) + "dsevents";
+                  if (fs.existsSync(eventsPath)) pathsToRemove.push(eventsPath);
+                }
+              });
+            }
+            pathsToRemove.forEach((p) => {
+              if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+            });
+
             sendMessage(window, "historical-data", {
               files: results,
               error: errorMessage,
@@ -364,21 +467,17 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
             if (ctreLicensePrompt === null) {
               ctreLicensePrompt = new Promise(async (resolve) => {
                 while (true) {
-                  let response = await new Promise<Electron.MessageBoxReturnValue>((resolve) =>
-                    dialog
-                      .showMessageBox(window, {
-                        type: "question",
-                        title: "Alert",
-                        message: "CTRE License Agreement",
-                        detail:
-                          "Hoot log file decoding requires agreement to CTRE's end user license agreement. Please click the button below to view the full license agreement, then check the box if you agree to the terms.",
-                        checkboxLabel: "I Agree",
-                        buttons: ["View License", "OK"],
-                        defaultId: 1,
-                        icon: WINDOW_ICON
-                      })
-                      .then((response) => resolve(response))
-                  );
+                  let response = await dialog.showMessageBox(window, {
+                    type: "question",
+                    title: "Alert",
+                    message: "CTRE License Agreement",
+                    detail:
+                      "Hoot log file decoding requires agreement to CTRE's end user license agreement. Please click the button below to view the full license agreement, then check the box if you agree to the terms.",
+                    checkboxLabel: "I Agree",
+                    buttons: ["View License", "OK"],
+                    defaultId: 1,
+                    icon: WINDOW_ICON
+                  });
                   if (response.response === 1) {
                     if (response.checkboxChecked) {
                       prefs.ctreLicenseAccepted = true;
@@ -411,9 +510,9 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
               .finally(() => {
                 convertHoot(logPath)
                   .then((wpilogPath) => {
+                    pathsToRemove.push(wpilogPath);
                     openPath(wpilogPath, (buffer) => {
                       results[0] = buffer;
-                      fs.rmSync(wpilogPath);
                     });
                   })
                   .catch((reason) => {
@@ -431,20 +530,23 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
           // REVLOG, convert to WPILOG
           targetCount += 1;
 
-          // Save WPILOG in temporary folder
-          let wpilogPath = path.join(app.getPath("temp"), "revlog_" + createUUID() + ".wpilog");
-          parseREVLOG(logPath, wpilogPath)
-            .then(() => {
-              openPath(wpilogPath, (buffer) => {
-                results[0] = buffer;
-                fs.rmSync(wpilogPath);
-              });
-            })
-            .catch((err) => {
-              errorMessage = err.message;
-              completedCount++;
-              sendIfReady();
+          try {
+            let chunks: Buffer[] = [];
+            let writable = new Writable({
+              write(chunk, encoding, callback) {
+                chunks.push(chunk);
+                callback();
+              }
             });
+            await parseREVLOG(logPath, writable);
+            results[0] = Buffer.concat(chunks);
+            completedCount++;
+            sendIfReady();
+          } catch (err: any) {
+            errorMessage = err.message;
+            completedCount++;
+            sendIfReady();
+          }
         } else if (logPath.endsWith(".wpilogxz")) {
           // Externally compressed WPILOG, decompress
           targetCount += 1;
@@ -491,52 +593,6 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
           targetCount += 1;
           openPath(logPath, (buffer) => (results[0] = buffer));
         }
-      }
-      break;
-
-    case "numeric-array-deprecation-warning":
-      {
-        let shouldForce: boolean = message.data.force;
-        let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-        if (!shouldForce && prefs.skipNumericArrayDeprecationWarning) return;
-        if (!prefs.skipNumericArrayDeprecationWarning) {
-          prefs.skipNumericArrayDeprecationWarning = true;
-          jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-          sendAllPreferences();
-        }
-        dialog.showMessageBox(window, {
-          type: "info",
-          title: "Alert",
-          message: "Deprecated data format",
-          detail:
-            "The legacy numeric array format for structured data is deprecated and will be removed in 2027. Check the AdvantageScope documentation for details on migrating to a modern alternative.",
-          icon: WINDOW_ICON
-        });
-      }
-      break;
-
-    case "ftc-experimental-warning":
-      {
-        let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-        if (prefs.skipFTCExperimentalWarning) return;
-        dialog
-          .showMessageBox(window, {
-            type: "info",
-            title: "Alert",
-            message: "Experimental Feature",
-            detail:
-              "Support for FTC fields in AdvantageScope is an experimental feature, and may not function properly in all cases. Please report any problems via the GitHub issues page.",
-            buttons: ["OK"],
-            checkboxLabel: "Don't Show Again",
-            icon: WINDOW_ICON
-          })
-          .then((response) => {
-            if (response.checkboxChecked) {
-              prefs.skipFTCExperimentalWarning = true;
-              jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-              sendAllPreferences();
-            }
-          });
       }
       break;
 
@@ -635,6 +691,24 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
       });
       break;
 
+    case "ask-open-tuning-context-menu":
+      const tuningMenu = new Menu();
+      tuningMenu.append(
+        new MenuItem({
+          label: "Copy Tuned Values",
+          enabled: message.data.isTuningMode,
+          click() {
+            clipboard.writeText(message.data.values);
+          }
+        })
+      );
+      tuningMenu.popup({
+        window: window,
+        x: Math.round(message.data.position[0]),
+        y: Math.round(message.data.position[1])
+      });
+      break;
+
     case "open-app-menu":
     case "close-app-menu":
       {
@@ -722,18 +796,18 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
           // Make icon with color
           const size = 15;
           const color = hex.rgb(ensureThemeContrast(value, nativeTheme.shouldUseDarkColors));
-          const png = new PNG({ width: size, height: size });
+          const buf = Buffer.alloc(size * size * 4);
           for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
               const idx = (y * size + x) * 4;
-              png.data[idx + 0] = color[0];
-              png.data[idx + 1] = color[1];
-              png.data[idx + 2] = color[2];
-              png.data[idx + 3] = 255;
+              // Bitmaps are in BGR format, so reverse the directions
+              buf[idx + 0] = color[2];
+              buf[idx + 1] = color[1];
+              buf[idx + 2] = color[0];
+              buf[idx + 3] = 255;
             }
           }
-          const data = PNG.sync.write(png).toString("base64");
-          return nativeImage.createFromDataURL("data:image/png;base64," + data);
+          return nativeImage.createFromBitmap(buf, { height: size, width: size });
         };
 
         // Add options
@@ -941,12 +1015,15 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
         const editAxisMenu = new Menu();
 
         if (legend === "discrete") {
+          let showRobotMode: boolean = message.data.showRobotMode;
           // Discrete controls
           editAxisMenu.append(
             new MenuItem({
-              label: "Add Enabled State",
+              label: "Show Robot Mode",
+              type: "checkbox",
+              checked: showRobotMode,
               click() {
-                sendMessage(window, "add-discrete-enabled");
+                sendMessage(window, "set-robot-mode-visible", { showRobotMode: !showRobotMode });
               }
             })
           );
@@ -1267,11 +1344,15 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
       );
       break;
 
+    case "ask-2d-camera":
+      select2DCameraPopup(window, message.data.position, message.data.selectedIndex);
+      break;
+
     case "export-console":
       dialog
         .showSaveDialog(window, {
           title: "Select export location for console log",
-          defaultPath: "Console " + new Date().toLocaleDateString().replaceAll("/", "-") + ".txt",
+          defaultPath: "Console " + formatDate() + ".txt",
           properties: ["createDirectory", "showOverwriteConfirmation", "dontAddToRecent"],
           filters: [{ name: "Text files", extensions: ["txt"] }]
         })
@@ -1572,6 +1653,45 @@ function select3DCameraPopup(
   });
 }
 
+function select2DCameraPopup(window: BrowserWindow, position: [number, number], selectedIndex: Field2dCameraMode) {
+  const cameraMenu = new Menu();
+  cameraMenu.append(
+    new MenuItem({
+      label: "Unlocked",
+      type: "checkbox",
+      checked: selectedIndex === Field2dCameraMode.Unlocked,
+      click() {
+        sendMessage(window, "set-2d-camera", Field2dCameraMode.Unlocked);
+      }
+    })
+  );
+  cameraMenu.append(
+    new MenuItem({
+      label: "Locked to Robot",
+      type: "checkbox",
+      checked: selectedIndex === Field2dCameraMode.Robot,
+      click() {
+        sendMessage(window, "set-2d-camera", Field2dCameraMode.Robot);
+      }
+    })
+  );
+  cameraMenu.append(
+    new MenuItem({
+      label: "Locked to Robot && Rotation",
+      type: "checkbox",
+      checked: selectedIndex === Field2dCameraMode.RobotAndRotation,
+      click() {
+        sendMessage(window, "set-2d-camera", Field2dCameraMode.RobotAndRotation);
+      }
+    })
+  );
+  cameraMenu.popup({
+    window: window,
+    x: Math.round(position[0]),
+    y: Math.round(position[1])
+  });
+}
+
 /**
  * Process a message from a download window.
  * @param message The received message
@@ -1582,6 +1702,8 @@ function handleDownloadMessage(message: NamedMessage) {
 
   switch (message.name) {
     case "start":
+      downloadDevice = "systemcore";
+      downloadAuthFailedOnce = false;
       downloadAddress = message.data.address;
       downloadPath = message.data.path;
       if (!downloadPath.endsWith("/")) downloadPath += "/";
@@ -1599,86 +1721,110 @@ function handleDownloadMessage(message: NamedMessage) {
   }
 }
 
-/** Starts a new FTP connection. */
-async function downloadStart() {
+/** Starts a new SSH connection. */
+function downloadStart() {
   if (downloadRetryTimeout) clearTimeout(downloadRetryTimeout);
   if (downloadRefreshInterval) clearInterval(downloadRefreshInterval);
-  downloadClient?.trackProgress();
-  downloadClient?.close();
-  downloadClientIsSaving = false;
+  downloadClient?.end();
   downloadFileSizeCache = {};
-
-  // Connect to server
-  try {
-    downloadClient = await new FTPClient(DOWNLOAD_TIMEOUT_MS);
-    await downloadClient.access({
-      host: downloadAddress
-    });
-  } catch (error) {
-    downloadError((error as FTPError).message);
-  }
-
-  // Start periodic read
-  let readFiles = async () => {
-    if (downloadClientIsSaving) return;
-    let list: FileInfo[] | undefined = undefined;
-    try {
-      list = await downloadClient?.list(downloadPath);
-    } catch (error) {
-      downloadError((error as FTPError).message);
-    }
-    if (list !== undefined) {
-      // Send file list to window
-      if (downloadWindow) {
-        if (list.length === 0) {
-          downloadError("No files");
+  downloadClient = new Client()
+    .once("ready", () => {
+      // Successful SSH connection
+      downloadAuthFailedOnce = false;
+      downloadClient?.sftp((error, sftp) => {
+        if (error) {
+          // Failed to start SFTP
+          downloadError(error.message);
         } else {
-          const filesAndFolders = list.filter(
-            (file) =>
-              !file.name.startsWith(".") &&
-              (file.isDirectory ||
-                file.name.endsWith(".rlog") ||
-                file.name.endsWith(".wpilog") ||
-                file.name.endsWith(".wpilogxz") ||
-                file.name.endsWith(".hoot") ||
-                file.name.endsWith(".revlog"))
-          );
-          const listData: { name: string; size: number; isFolder: boolean }[] = [];
-          for (const file of filesAndFolders) {
-            if (file.isDirectory) {
-              let totalSize = 0;
-              try {
-                const subFiles = await downloadClient?.list(downloadPath + file.name);
-                if (subFiles) {
-                  subFiles.forEach((subFile) => {
-                    if (subFile.isFile) totalSize += subFile.size;
-                  });
+          // Successful SFTP connection
+          let readFiles = () => {
+            sftp.readdir(downloadPath, async (error, list) => {
+              if (error) {
+                // Failed to read directory (not found?)
+                downloadError(error.message);
+              } else {
+                // Return list of files and folders
+                const filesAndFolders = list.filter(
+                  (file) =>
+                    !file.filename.startsWith(".") &&
+                    ((file.attrs as Stats).isDirectory() ||
+                      file.filename.endsWith(".rlog") ||
+                      file.filename.endsWith(".wpilog") ||
+                      file.filename.endsWith(".wpilogxz") ||
+                      file.filename.endsWith(".revlog") ||
+                      file.filename.endsWith(".hoot"))
+                );
+                const listData: { name: string; size: number; isFolder: boolean }[] = [];
+                for (const file of filesAndFolders) {
+                  if ((file.attrs as Stats).isDirectory()) {
+                    let totalSize = 0;
+                    try {
+                      const subFiles = await new Promise<FileEntry[] | undefined>((resolve) => {
+                        sftp.readdir(downloadPath + file.filename, (err, subList) => {
+                          if (err) resolve(undefined);
+                          else resolve(subList);
+                        });
+                      });
+                      if (subFiles) {
+                        subFiles.forEach((subFile) => {
+                          if (!(subFile.attrs as Stats).isDirectory() && !subFile.filename.startsWith(".")) {
+                            totalSize += subFile.attrs.size;
+                          }
+                        });
+                      }
+                    } catch (e) {}
+                    listData.push({ name: file.filename, size: totalSize, isFolder: true });
+                  } else {
+                    listData.push({ name: file.filename, size: file.attrs.size, isFolder: false });
+                  }
                 }
-              } catch (e) {}
-              listData.push({ name: file.name, size: totalSize, isFolder: true });
-            } else {
-              listData.push({ name: file.name, size: file.size, isFolder: false });
-            }
-          }
-          sendMessage(downloadWindow, "set-list", listData);
-        }
-      }
 
-      // Save cache of file sizes
-      list.forEach((file) => {
-        downloadFileSizeCache[file.name] = file.size;
+                if (downloadWindow && !downloadWindow.isDestroyed()) {
+                  sendMessage(downloadWindow, "set-list", listData);
+                }
+
+                // Save cache of file sizes
+                listData.forEach((file) => {
+                  downloadFileSizeCache[file.name] = file.size;
+                });
+              }
+            });
+          };
+
+          // Start periodic read
+          downloadRefreshInterval = setInterval(readFiles, DOWNLOAD_REFRESH_INTERVAL_MS);
+          readFiles();
+        }
       });
-    }
-  };
-  downloadRefreshInterval = setInterval(readFiles, DOWNLOAD_REFRESH_INTERVAL_MS);
-  readFiles();
+    })
+    .on("error", (error) => {
+      // Failed SSH connection
+      downloadDevice = downloadDevice === "systemcore" ? "roborio" : "systemcore";
+      if (downloadAuthFailedOnce) {
+        downloadAuthFailedOnce = false;
+        downloadError(error.message);
+      } else {
+        downloadAuthFailedOnce = true;
+        if (downloadRefreshInterval) clearInterval(downloadRefreshInterval);
+        downloadStart();
+      }
+    })
+    .connect({
+      // Start connection
+      host: downloadAddress,
+      port: 22,
+      forceIPv4: true,
+      readyTimeout: DOWNLOAD_CONNECT_TIMEOUT_MS,
+      username: downloadDevice === "systemcore" ? DOWNLOAD_SYSTEMCORE_USERNAME : DOWNLOAD_ROBORIO_USERNAME,
+      password: downloadDevice === "systemcore" ? DOWNLOAD_SYSTEMCORE_PASSWORD : DOWNLOAD_ROBORIO_PASSWORD
+    });
 }
 
 /** Closes the FTP connection. */
 function downloadStop() {
-  downloadClient?.trackProgress();
-  downloadClient?.close();
-  downloadClientIsSaving = false;
+  downloadClient?.end();
+  downloadDevice = "systemcore";
+  downloadAuthFailedOnce = false;
   if (downloadRetryTimeout) clearTimeout(downloadRetryTimeout);
   if (downloadRefreshInterval) clearInterval(downloadRefreshInterval);
 }
@@ -1686,24 +1832,23 @@ function downloadStop() {
 /** Problem connecting or reading data, restart after a delay. */
 function downloadError(errorMessage: string) {
   if (!downloadWindow) return;
+  downloadDevice = "systemcore";
+  downloadAuthFailedOnce = false;
   sendMessage(downloadWindow, "show-error", errorMessage);
   if (downloadRefreshInterval) clearInterval(downloadRefreshInterval);
   downloadRetryTimeout = setTimeout(downloadStart, DOWNLOAD_RETRY_DELAY_MS);
-  downloadClientIsSaving = false;
 }
 
 /** Guides the user through saving a set of files. */
 function downloadSave(files: string[]) {
   if (!downloadWindow) return;
-  downloadClientIsSaving = true;
   let selectPromise;
   let firstExtension = path.extname(files[0]);
   if (files.length > 1 || firstExtension === "") {
     selectPromise = dialog.showOpenDialog(downloadWindow, {
       title: "Select save location for robot logs",
       buttonLabel: "Save",
-      properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
-      defaultPath: getDefaultLogPath()
+      properties: ["openDirectory", "createDirectory", "dontAddToRecent"]
     });
   } else {
     let extension = firstExtension.slice(1);
@@ -1734,7 +1879,7 @@ function downloadSave(files: string[]) {
   }
 
   // Handle selected save location
-  selectPromise.then(async (response) => {
+  selectPromise.then((response) => {
     if (response.canceled) return;
     let savePath: string = "";
     if (files.length > 1 || firstExtension === "") {
@@ -1743,124 +1888,180 @@ function downloadSave(files: string[]) {
       savePath = (response as Electron.SaveDialogReturnValue).filePath as string;
     }
     if (savePath !== "") {
-      // Set up transfer progress
-      if (downloadWindow) sendMessage(downloadWindow, "set-progress", 0);
-      let sizeTotal = 0;
-      downloadClient?.trackProgress((info) => {
-        if (!downloadWindow) return;
-        sendMessage(downloadWindow, "set-progress", { current: info.bytesOverall, total: sizeTotal });
-      });
-
       // Start saving
-      if (files.length === 1 && firstExtension !== "") {
-        // Single file
-        if (files[0] in downloadFileSizeCache) {
-          sizeTotal = downloadFileSizeCache[files[0]];
-        }
-        try {
-          await downloadClient?.downloadTo(savePath, downloadPath + files[0]);
-          if (!downloadWindow) return;
-          sendMessage(downloadWindow, "set-progress", 1);
-
-          // Ask if the log should be opened
-          dialog
-            .showMessageBox(downloadWindow, {
-              type: "question",
-              message: "Open log?",
-              detail: 'Would you like to open the log file "' + path.basename(savePath) + '"?',
-              icon: WINDOW_ICON,
-              buttons: ["Open", "Skip"],
-              defaultId: 0
-            })
-            .then((result) => {
-              if (result.response === 0) {
-                downloadWindow?.destroy();
-                downloadStop();
-                hubWindows[0].focus();
-                sendMessage(hubWindows[0], "open-files", { files: [savePath], merge: false });
-              }
-            });
-        } catch (error) {
-          downloadError((error as FTPError).message);
-        }
-      } else {
-        // Multiple files
-        let downloadTasks: { remote: string; local: string; size: number }[] = [];
-        for (const file of files) {
-          if (path.extname(file) === "") {
-            // Folder
-            try {
-              const subFiles = await downloadClient?.list(downloadPath + file);
-              if (subFiles) {
-                const localFolderPath = path.join(savePath, file);
-                if (!fs.existsSync(localFolderPath)) {
-                  fs.mkdirSync(localFolderPath);
+      downloadClient?.sftp(async (error, sftp) => {
+        if (error) {
+          downloadError(error.message);
+        } else {
+          if (downloadWindow) sendMessage(downloadWindow, "set-progress", 0);
+          if (files.length === 1 && firstExtension !== "") {
+            // Single file
+            sftp.fastGet(
+              downloadPath + files[0],
+              savePath,
+              {
+                step: (sizeTransferred, _, sizeTotal) => {
+                  if (!downloadWindow) return;
+                  sendMessage(downloadWindow, "set-progress", { current: sizeTransferred, total: sizeTotal });
                 }
-                for (const subFile of subFiles) {
-                  if (subFile.isFile) {
-                    downloadTasks.push({
-                      remote: downloadPath + file + "/" + subFile.name,
-                      local: path.join(localFolderPath, subFile.name),
-                      size: subFile.size
+              },
+              (error) => {
+                if (error) {
+                  downloadError(error.message);
+                } else {
+                  if (!downloadWindow) return;
+                  sendMessage(downloadWindow, "set-progress", 1);
+
+                  // Ask if the log should be opened
+                  dialog
+                    .showMessageBox(downloadWindow, {
+                      type: "question",
+                      message: "Open log?",
+                      detail: 'Would you like to open the log file "' + path.basename(savePath) + '"?',
+                      icon: WINDOW_ICON,
+                      buttons: ["Open", "Skip"],
+                      defaultId: 0
+                    })
+                    .then((result) => {
+                      if (result.response === 0) {
+                        downloadWindow?.destroy();
+                        downloadStop();
+                        hubWindows[0].focus();
+                        sendMessage(hubWindows[0], "open-files", { files: [savePath], merge: false });
+                      }
+                    });
+                }
+              }
+            );
+          } else {
+            // Multiple files
+            let downloadTasks: { remote: string; local: string; size: number }[] = [];
+            for (const file of files) {
+              if (path.extname(file) === "") {
+                // Folder
+                try {
+                  const subFiles = await new Promise<FileEntry[] | undefined>((resolve) => {
+                    sftp.readdir(downloadPath + file, (err, subList) => {
+                      if (err) resolve(undefined);
+                      else resolve(subList);
+                    });
+                  });
+                  if (subFiles) {
+                    const localFolderPath = path.join(savePath, file);
+                    if (!fs.existsSync(localFolderPath)) {
+                      fs.mkdirSync(localFolderPath, { recursive: true });
+                    }
+                    for (const subFile of subFiles) {
+                      if (!(subFile.attrs as Stats).isDirectory() && !subFile.filename.startsWith(".")) {
+                        downloadTasks.push({
+                          remote: downloadPath + file + "/" + subFile.filename,
+                          local: path.join(localFolderPath, subFile.filename),
+                          size: subFile.attrs.size
+                        });
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.error(e);
+                }
+              } else {
+                // File
+                let remoteSize = file in downloadFileSizeCache ? downloadFileSizeCache[file] : 0;
+                downloadTasks.push({
+                  remote: downloadPath + file,
+                  local: path.join(savePath, file),
+                  size: remoteSize
+                });
+              }
+            }
+
+            let totalCount = downloadTasks.length;
+            let completeCount = 0;
+            let skipCount = 0;
+            let allSizesTransferred: number[] = new Array(downloadTasks.length).fill(0);
+            let allSizesTotal = 0;
+
+            let tasksToDownload: { task: { remote: string; local: string; size: number }; index: number }[] = [];
+            for (let i = 0; i < downloadTasks.length; i++) {
+              const task = downloadTasks[i];
+              let shouldSkip = false;
+              try {
+                if (fs.existsSync(task.local) && fs.statSync(task.local).size >= task.size) {
+                  shouldSkip = true;
+                }
+              } catch (e) {}
+
+              if (shouldSkip) {
+                completeCount++;
+                skipCount++;
+              } else {
+                allSizesTotal += task.size;
+                tasksToDownload.push({ task, index: i });
+              }
+            }
+
+            if (tasksToDownload.length === 0) {
+              // All files skipped
+              if (downloadWindow) sendMessage(downloadWindow, "show-alert", "No new logs found.");
+              return;
+            }
+
+            tasksToDownload.forEach(({ task, index }) => {
+              sftp.fastGet(
+                task.remote,
+                task.local,
+                {
+                  step: (sizeTransferred) => {
+                    allSizesTransferred[index] = sizeTransferred;
+                    if (!downloadWindow) return;
+                    let sumSizeTransferred = allSizesTransferred.reduce((a, b) => a + b, 0);
+                    sendMessage(downloadWindow, "set-progress", {
+                      current: sumSizeTransferred,
+                      total: allSizesTotal
                     });
                   }
+                },
+                (error) => {
+                  if (error) {
+                    downloadError(error.message);
+                  } else {
+                    completeCount++;
+
+                    if (completeCount >= totalCount) {
+                      let message: string;
+                      let newCount = completeCount - skipCount;
+                      if (skipCount > 0) {
+                        message =
+                          "Saved " +
+                          newCount.toString() +
+                          " new log" +
+                          (newCount === 1 ? "" : "s") +
+                          " (" +
+                          skipCount.toString() +
+                          " skipped) to <u>" +
+                          savePath +
+                          "</u>";
+                      } else {
+                        message =
+                          "Saved " +
+                          completeCount.toString() +
+                          " log" +
+                          (completeCount === 1 ? "" : "s") +
+                          " to <u>" +
+                          savePath +
+                          "</u>";
+                      }
+                      if (!downloadWindow) return;
+                      sendMessage(downloadWindow, "set-progress", 1);
+                      sendMessage(downloadWindow, "show-alert", message);
+                    }
+                  }
                 }
-              }
-            } catch (e) {
-              console.error(e);
-            }
-          } else {
-            // File
-            let remoteSize = 0;
-            if (file in downloadFileSizeCache) remoteSize = downloadFileSizeCache[file];
-            downloadTasks.push({
-              remote: downloadPath + file,
-              local: path.join(savePath, file),
-              size: remoteSize
+              );
             });
           }
         }
-
-        // Filter existing
-        let totalCount = downloadTasks.length;
-        downloadTasks = downloadTasks.filter((task) => {
-          if (!fs.existsSync(task.local) || fs.statSync(task.local).size < task.size) {
-            sizeTotal += task.size;
-            return true;
-          }
-          return false;
-        });
-
-        if (downloadTasks.length === 0) {
-          // All files skipped
-          if (downloadWindow) sendMessage(downloadWindow, "show-alert", "No new logs found.");
-          return;
-        }
-        try {
-          for (const task of downloadTasks) {
-            await downloadClient?.downloadTo(task.local, task.remote);
-          }
-          if (!downloadWindow) return;
-          sendMessage(downloadWindow, "set-progress", 1);
-
-          // Send message
-          let message: string;
-          if (totalCount > downloadTasks.length) {
-            message = `Saved ${downloadTasks.length} new file${downloadTasks.length === 1 ? "" : "s"} (${
-              totalCount - downloadTasks.length
-            } skipped) to <u>${savePath}</u>`;
-          } else {
-            message = `Saved ${downloadTasks.length} new file${
-              downloadTasks.length === 1 ? "" : "s"
-            } to <u>${savePath}</u>`;
-          }
-          if (!downloadWindow) return;
-          sendMessage(downloadWindow, "set-progress", 1);
-          sendMessage(downloadWindow, "show-alert", message);
-        } catch (error) {
-          downloadError((error as FTPError).message);
-        }
-      }
+      });
     }
   });
 }
@@ -1923,7 +2124,7 @@ function setupMenu() {
           type: "checkbox",
           async click(item) {
             const isCustom = item.checked;
-            let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+            let prefs: Preferences = await jsonfile.readFile(PREFS_FILENAME);
             if (isCustom) {
               let result = await dialog.showOpenDialog({
                 title: "Select folder containing custom AdvantageScope assets",
@@ -1936,8 +2137,8 @@ function setupMenu() {
             } else {
               prefs.userAssetsFolder = null;
             }
-            jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-            advantageScopeAssets = loadAssets();
+            await jsonfile.writeFile(PREFS_FILENAME, prefs);
+            advantageScopeAssets = await loadAssets();
             sendAllPreferences();
             sendAssets();
           }
@@ -1999,10 +2200,9 @@ function setupMenu() {
                 filters: [
                   {
                     name: "Robot logs",
-                    extensions: ["rlog", "wpilog", "wpilogxz", "dslog", "dsevents", "hoot", "revlog", "log", "csv"]
+                    extensions: ["rlog", "wpilog", "wpilogxz", "hoot", "revlog", "log", "csv", "dslog", "dsevents"]
                   }
-                ],
-                defaultPath: getDefaultLogPath()
+                ]
               })
               .then((files) => {
                 if (files.filePaths.length > 0) {
@@ -2024,10 +2224,9 @@ function setupMenu() {
                 filters: [
                   {
                     name: "Robot logs",
-                    extensions: ["rlog", "wpilog", "wpilogxz", "dslog", "dsevents", "hoot", "revlog", "log", "csv"]
+                    extensions: ["rlog", "wpilog", "wpilogxz", "hoot", "revlog", "log", "csv", "dslog", "dsevents"]
                   }
-                ],
-                defaultPath: getDefaultLogPath()
+                ]
               })
               .then((files) => {
                 if (files.filePaths.length > 0) {
@@ -2046,25 +2245,27 @@ function setupMenu() {
               click(_, baseWindow) {
                 const window = baseWindow as BrowserWindow | undefined;
                 if (window === undefined || !hubWindows.includes(window)) return;
-                sendMessage(window, "start-live", false);
+                sendMessage(window, "start-live", "robot");
               }
             },
             { type: "separator" },
-            ...(["nt4", "nt4-akit", "phoenix", "rlog", "ftcdashboard"] as const).map((liveMode: LiveMode) => {
-              let item: Electron.MenuItemConstructorOptions = {
-                label: getLiveModeName(liveMode),
-                click(_, baseWindow) {
-                  const window = baseWindow as BrowserWindow | undefined;
-                  if (window === undefined || !hubWindows.includes(window)) return;
-                  let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-                  prefs.liveMode = liveMode;
-                  jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-                  sendAllPreferences();
-                  sendMessage(window, "start-live", false);
-                }
-              };
-              return item;
-            })
+            ...(["nt4", "nt4-akit", "nt4-systemcore", "phoenix", "rlog", "ftcdashboard"] as const).map(
+              (liveMode: LiveMode) => {
+                let item: Electron.MenuItemConstructorOptions = {
+                  label: getLiveModeName(liveMode),
+                  click(_, baseWindow) {
+                    const window = baseWindow as BrowserWindow | undefined;
+                    if (window === undefined || !hubWindows.includes(window)) return;
+                    let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+                    prefs.liveMode = liveMode;
+                    jsonfile.writeFileSync(PREFS_FILENAME, prefs);
+                    sendAllPreferences();
+                    sendMessage(window, "start-live", "robot");
+                  }
+                };
+                return item;
+              }
+            )
           ]
         },
         {
@@ -2077,26 +2278,37 @@ function setupMenu() {
               click(_, baseWindow) {
                 const window = baseWindow as BrowserWindow | undefined;
                 if (window === undefined || !hubWindows.includes(window)) return;
-                sendMessage(window, "start-live", true);
+                sendMessage(window, "start-live", "sim");
               }
             },
             { type: "separator" },
-            ...(["nt4", "nt4-akit", "phoenix", "rlog", "ftcdashboard"] as const).map((liveMode: LiveMode) => {
-              let item: Electron.MenuItemConstructorOptions = {
-                label: getLiveModeName(liveMode),
-                click(_, baseWindow) {
-                  const window = baseWindow as BrowserWindow | undefined;
-                  if (window === undefined || !hubWindows.includes(window)) return;
-                  let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-                  prefs.liveMode = liveMode;
-                  jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-                  sendAllPreferences();
-                  sendMessage(window, "start-live", true);
-                }
-              };
-              return item;
-            })
+            ...(["nt4", "nt4-akit", "nt4-systemcore", "phoenix", "rlog", "ftcdashboard"] as const).map(
+              (liveMode: LiveMode) => {
+                let item: Electron.MenuItemConstructorOptions = {
+                  label: getLiveModeName(liveMode),
+                  click(_, baseWindow) {
+                    const window = baseWindow as BrowserWindow | undefined;
+                    if (window === undefined || !hubWindows.includes(window)) return;
+                    let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+                    prefs.liveMode = liveMode;
+                    jsonfile.writeFileSync(PREFS_FILENAME, prefs);
+                    sendAllPreferences();
+                    sendMessage(window, "start-live", "sim");
+                  }
+                };
+                return item;
+              }
+            )
           ]
+        },
+        {
+          label: "Connect to Driver Station",
+          accelerator: "CmdOrCtrl+Alt+Shift+K",
+          click(_, baseWindow) {
+            const window = baseWindow as BrowserWindow | undefined;
+            if (window === undefined || !hubWindows.includes(window)) return;
+            sendMessage(window, "start-live", "ds");
+          }
         },
         {
           label: "Download Logs...",
@@ -2109,11 +2321,24 @@ function setupMenu() {
         },
         { type: "separator" },
         {
-          label: "Use USB roboRIO Address",
+          label: "Use Systemcore USB Address",
           type: "checkbox",
-          checked: false,
+          checked: prefs.systemcoreStaticAddress === "usb",
           click(item) {
-            usingUsb = item.checked;
+            let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+            prefs.systemcoreStaticAddress = item.checked ? "usb" : "";
+            jsonfile.writeFileSync(PREFS_FILENAME, prefs);
+            sendAllPreferences();
+          }
+        },
+        {
+          label: "Use Systemcore Wi-Fi Address",
+          type: "checkbox",
+          checked: prefs.systemcoreStaticAddress === "wifi",
+          click(item) {
+            let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+            prefs.systemcoreStaticAddress = item.checked ? "wifi" : "";
+            jsonfile.writeFileSync(PREFS_FILENAME, prefs);
             sendAllPreferences();
           }
         },
@@ -2166,7 +2391,7 @@ function setupMenu() {
             dialog
               .showSaveDialog({
                 title: "Select export location for layout file",
-                defaultPath: "AdvantageScope " + new Date().toLocaleDateString().replaceAll("/", "-") + ".json",
+                defaultPath: "AdvantageScope " + formatDate() + ".json",
                 properties: ["createDirectory", "showOverwriteConfirmation", "dontAddToRecent"],
                 filters: [{ name: "JSON files", extensions: ["json"] }]
               })
@@ -2233,14 +2458,14 @@ function setupMenu() {
                     }
                   }
 
-                  // Check version compatability
+                  // Check version compatibility
                   if (app.isPackaged && data.version !== APP_VERSION) {
                     let result = dialog.showMessageBoxSync({
                       type: "warning",
                       title: "Warning",
                       message: "Version mismatch",
                       detail:
-                        "The layout file was generated by a different version of AdvantageScope. Compatability is not guaranteed.",
+                        "The layout file was generated by a different version of AdvantageScope. Compatibility is not guaranteed.",
                       buttons: ["Continue", "Cancel"],
                       icon: WINDOW_ICON
                     });
@@ -2500,6 +2725,9 @@ function setupMenu() {
 
   const menu = Menu.buildFromTemplate(menuTemplate);
   Menu.setApplicationMenu(menu);
+  BrowserWindow.getAllWindows().forEach((w) => {
+    if (!hubWindows.includes(w)) w.setMenu(null);
+  });
 }
 
 /** Creates the "About AdvantageScope" window. */
@@ -2566,7 +2794,7 @@ function createHubWindow(state?: WindowState) {
   switch (process.platform) {
     case "darwin":
       prefs.vibrancy = "sidebar";
-      if (Number(os.release().split(".")[0]) >= 20) prefs.titleBarStyle = "hiddenInset"; // macOS Big Sur
+      prefs.titleBarStyle = "hiddenInset";
       break;
     case "win32":
       let releaseSplit = os.release().split(".");
@@ -2794,6 +3022,7 @@ function createEditRangeWindow(
     resizable: false,
     icon: WINDOW_ICON,
     show: false,
+
     parent: parentWindow,
     modal: true,
     webPreferences: {
@@ -2803,7 +3032,8 @@ function createEditRangeWindow(
 
   // Finish setup
   editWindow.setMenu(null);
-  editWindow.once("ready-to-show", parentWindow.show);
+  editWindow.setMenuBarVisibility(false);
+  editWindow.once("ready-to-show", editWindow.show);
   editWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
     const { port1, port2 } = new MessageChannelMain();
@@ -2847,7 +3077,8 @@ function createUnitConversionWindow(
 
   // Finish setup
   unitConversionWindow.setMenu(null);
-  unitConversionWindow.once("ready-to-show", parentWindow.show);
+  unitConversionWindow.setMenuBarVisibility(false);
+  unitConversionWindow.once("ready-to-show", unitConversionWindow.show);
   unitConversionWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
     const { port1, port2 } = new MessageChannelMain();
@@ -2891,7 +3122,8 @@ function createRenameTabWindow(
 
   // Finish setup
   renameTabWindow.setMenu(null);
-  renameTabWindow.once("ready-to-show", parentWindow.show);
+  renameTabWindow.setMenuBarVisibility(false);
+  renameTabWindow.once("ready-to-show", renameTabWindow.show);
   renameTabWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
     const { port1, port2 } = new MessageChannelMain();
@@ -2922,6 +3154,7 @@ function createEditFovWindow(parentWindow: Electron.BrowserWindow, fov: number, 
     resizable: false,
     icon: WINDOW_ICON,
     show: false,
+
     parent: parentWindow,
     modal: true,
     webPreferences: {
@@ -2931,7 +3164,8 @@ function createEditFovWindow(parentWindow: Electron.BrowserWindow, fov: number, 
 
   // Finish setup
   editFovWindow.setMenu(null);
-  editFovWindow.once("ready-to-show", parentWindow.show);
+  editFovWindow.setMenuBarVisibility(false);
+  editFovWindow.once("ready-to-show", editFovWindow.show);
   editFovWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
     const { port1, port2 } = new MessageChannelMain();
@@ -2966,6 +3200,7 @@ function createExportWindow(
     resizable: false,
     icon: WINDOW_ICON,
     show: false,
+
     parent: parentWindow,
     modal: true,
     webPreferences: {
@@ -2975,7 +3210,8 @@ function createExportWindow(
 
   // Finish setup
   exportWindow.setMenu(null);
-  exportWindow.once("ready-to-show", parentWindow.show);
+  exportWindow.setMenuBarVisibility(false);
+  exportWindow.once("ready-to-show", exportWindow.show);
   let isPreparingExport = false;
   exportWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
@@ -3087,11 +3323,13 @@ function createSatellite(
     resizable: true,
     icon: WINDOW_ICON,
     show: false,
+
     webPreferences: {
       preload: path.join(__dirname, "preload.js")
     }
   });
   satellite.setMenu(null);
+  satellite.setMenuBarVisibility(false);
   satellite.once("ready-to-show", satellite.show);
   satellite.loadFile(path.join(__dirname, "../www/satellite.html"));
   let firstLoad = true;
@@ -3104,7 +3342,8 @@ function createSatellite(
       let message: NamedMessage = event.data;
       switch (message.name) {
         case "set-aspect-ratio":
-          let aspectRatio = message.data;
+          let aspectRatio = message.data.aspectRatio;
+          let lock = message.data.lock;
           if (aspectRatio === null) {
             satellite.setAspectRatio(0);
           } else {
@@ -3112,7 +3351,11 @@ function createSatellite(
             let originalArea = originalSize[0] * originalSize[1];
             let newY = Math.sqrt(originalArea / aspectRatio);
             let newX = aspectRatio * newY;
-            satellite.setAspectRatio(aspectRatio);
+            if (lock) {
+              satellite.setAspectRatio(aspectRatio);
+            } else {
+              satellite.setAspectRatio(0);
+            }
             satellite.setContentSize(Math.round(newX), Math.round(newY));
           }
           break;
@@ -3128,6 +3371,10 @@ function createSatellite(
           );
           break;
 
+        case "ask-2d-camera":
+          select2DCameraPopup(satellite, message.data.position, message.data.selectedIndex);
+          break;
+
         case "add-table-range":
           hubWindows.forEach((window) => {
             sendMessage(window, "add-table-range", {
@@ -3140,6 +3387,15 @@ function createSatellite(
 
         case "save-state":
           stateTracker.saveRendererState(satellite, message.data);
+          break;
+
+        case "update-preferences":
+          {
+            let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
+            mergePreferences(prefs, message.data);
+            jsonfile.writeFileSync(PREFS_FILENAME, prefs);
+            sendAllPreferences();
+          }
           break;
 
         case "call-selection-setter":
@@ -3208,7 +3464,7 @@ function openPreferences(parentWindow: Electron.BrowserWindow) {
   }
 
   const width = 400;
-  const optionRows = 12;
+  const optionRows = 13;
   const titleRows = 2;
   const height = optionRows * 27 + titleRows * 34 + 54;
   prefsWindow = new BrowserWindow({
@@ -3229,6 +3485,7 @@ function openPreferences(parentWindow: Electron.BrowserWindow) {
 
   // Finish setup
   prefsWindow.setMenu(null);
+  prefsWindow.setMenuBarVisibility(false);
   prefsWindow.once("ready-to-show", prefsWindow.show);
   prefsWindow.webContents.on("dom-ready", () => {
     // Create ports on reload
@@ -3278,6 +3535,7 @@ function openDownload(parentWindow: Electron.BrowserWindow) {
 
   // Finish setup
   downloadWindow.setMenu(null);
+  downloadWindow.setMenuBarVisibility(false);
   downloadWindow.once("ready-to-show", downloadWindow.show);
   downloadWindow.once("close", downloadStop);
   downloadWindow.webContents.on("dom-ready", () => {
@@ -3330,6 +3588,7 @@ function openLicenses(parentWindow: Electron.BrowserWindow) {
 
   // Finish setup
   licensesWindow.setMenu(null);
+  licensesWindow.setMenuBarVisibility(false);
   licensesWindow.once("ready-to-show", licensesWindow.show);
   licensesWindow.once("close", downloadStop);
   licensesWindow.loadFile(path.join(__dirname, "../www/licenses.html"));
@@ -3362,6 +3621,7 @@ function openSourceListHelp(parentWindow: Electron.BrowserWindow, config: Source
 
   // Finish setup
   helpWindow.setMenu(null);
+  helpWindow.setMenuBarVisibility(false);
   helpWindow.once("ready-to-show", helpWindow.show);
   helpWindow.once("close", downloadStop);
   helpWindow.webContents.on("dom-ready", () => {
@@ -3401,6 +3661,7 @@ function openBetaWelcome(parentWindow: Electron.BrowserWindow) {
   });
   // Finish setup
   betaWelcome.setMenu(null);
+  betaWelcome.setMenuBarVisibility(false);
   betaWelcome.on("close", () => {
     app.quit();
   });
@@ -3434,17 +3695,6 @@ function checkForUpdate(alwaysPrompt: boolean) {
   });
 }
 
-/** Returns the default path to use for storing log files. */
-function getDefaultLogPath(): string | undefined {
-  if (process.platform !== "win32") return undefined;
-  let prefs: Preferences = jsonfile.readFileSync(PREFS_FILENAME);
-  if (prefs.skipFrcLogFolderDefault) return undefined;
-  prefs.skipFrcLogFolderDefault = true;
-  jsonfile.writeFileSync(PREFS_FILENAME, prefs);
-  sendAllPreferences();
-  return FRC_LOG_FOLDER;
-}
-
 // "unsafe-eval" is required in the hub for protobufjs
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
 
@@ -3460,7 +3710,7 @@ if (process.platform === "linux") {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Check preferences and set theme
   let prefs = DEFAULT_PREFS;
   if (process.platform === "linux") {
@@ -3480,16 +3730,16 @@ app.whenReady().then(() => {
 
   // Load assets
   createAssetFolders();
-  startAssetDownloadLoop(() => {
-    advantageScopeAssets = loadAssets();
+  startAssetDownloadLoop(async () => {
+    advantageScopeAssets = await loadAssets();
     sendAssets();
   });
-  setInterval(() => {
+  setInterval(async () => {
     // Periodically load assets in case they are updated
-    advantageScopeAssets = loadAssets();
+    advantageScopeAssets = await loadAssets();
     sendAssets();
   }, 5000);
-  advantageScopeAssets = loadAssets();
+  advantageScopeAssets = await loadAssets();
 
   // Start owlet download
   startOwletDownloadLoop();
@@ -3516,12 +3766,12 @@ app.whenReady().then(() => {
       x.endsWith(".wpilog") ||
       x.endsWith(".wpilogxz") ||
       x.endsWith(".rlog") ||
-      x.endsWith(".dslog") ||
-      x.endsWith(".dsevents") ||
       x.endsWith(".hoot") ||
       x.endsWith(".revlog") ||
       x.endsWith(".log") ||
-      x.endsWith(".csv")
+      x.endsWith(".csv") ||
+      x.endsWith(".dslog") ||
+      x.endsWith(".dsevents")
   );
   if (fileArgs.length > 0) {
     firstOpenPath = fileArgs[0];

@@ -16,7 +16,7 @@ The points tab shows a 2D visualization of arbitrary points. This is a very flex
 
 The timeline is used to control playback and visualization. Clicking on the timeline selects a time, and right-clicking deselects it. The selected time is synchronized across all tabs, making it easy to quickly find this location in other views.
 
-The green sections of the timeline indicate when the robot is autonomous, and the blue sections indicate when the robot is teleoperated.
+Yellow sections indicate when the robot is autonomous, blue sections indicate when the robot is teleoperated, and gray sections indicate when the robot is in utility mode.
 
 To zoom, place the cursor over the timeline and scroll up or down. A range can also be selecting by clicking and dragging while holding `Shift`. Move left and right by scrolling horizontally (on supported devices), or by clicking and dragging on the timeline. When connected live, scrolling to the left unlocks from the current time, and scrolling all the way to the right locks to the current time again. Press `Ctrl+\` to zoom to the period where the robot is enabled.
 
@@ -42,19 +42,11 @@ Point data should be published as a byte-encoded struct or protobuf, using the `
 <TabItem value="wpilib" label="WPILib" default>
 
 ```java
-StructArrayPublisher<Translation2d> publisher = NetworkTableInstance.getDefault()
-  .getStructArrayTopic("MyTranslations", Translation2d.struct).publish();
-
-periodic() {
-  publisher.set(new Translation2d[] {
+Telemetry.log("MyTranslations",
+  new Translation2d[] {
     new Translation2d(0.0, 1.0),
     new Translation2d(2.0, 3.0)
   });
-  publisher.set(
-    new Translation2d(0.0, 1.0),
-    new Translation2d(2.0, 3.0)
-  );
-}
 ```
 
 </TabItem>

@@ -14,7 +14,7 @@ The line graph tab is unit-aware, which means that numeric values can be easily 
 
 AdvantageScope supports several methods to provide unit information about each field. Most common units are supported; for a complete list, check the popup menu when configuring [manual conversion](#manual-conversion).
 
-For (2) and (3), unit types are parsed using strings. AdvantageScope supports a wide variety of common names for each unit, including multiple variations (e.g. `ft` and `feet` are both OK). If a unit name is not being parsed as expected, please [open an issue](https://github.com/Mechanical-Advantage/AdvantageScope/issues) to let us know.
+For (2) and (3), unit types are parsed using strings. AdvantageScope supports a wide variety of common names for each unit, including multiple variations (e.g. `ft` and `feet` are both OK). If a unit name is not being parsed as expected, please [open an issue](https://github.com/Mechanical-Advantage/AdvantageScope/issues).
 
 :::tip
 Not sure whether units are being parsed correctly? Check whether a unit type is displayed on the Y axis when adding a field to the line graph.
@@ -22,14 +22,16 @@ Not sure whether units are being parsed correctly? Check whether a unit type is 
 
 ### 🥇 Struct Units
 
-AdvantageScope automatically uses the native units for common structured data types like `Rotation2d` and `Translation3d`. Publishing applicable values using these formats is **always the best way to publish data** and ensures maximum compatibility when visualizing geometry data (see [here](/overview/legacy-formats) for details).
+AdvantageScope automatically uses the native units for common structured data types like `Rotation2d` and `Translation3d`. Publishing applicable values using these formats is **always the best way to publish data** and ensures maximum compatibility when visualizing geometry data.
 
 ### 🥈 Field Metadata
 
 The WPILOG and NetworkTables formats support publishing additional "metadata" for each field. AdvantageScope looks for JSON fields named "unit" or "units" containing a string name for the unit type (using spaces, camel-case, pascal-case, or snake-case). To check the metadata for each field, hover the cursor over the field name in the sidebar.
 
 :::tip
-AdvantageKit includes support for unit metadata when logging inputs and outputs, including annotation logging. Check the documentation [here](https://docs.advantagekit.org/data-flow/supported-types#units) for details.
+In WPILib, logging `Measure` objects using `Telemetry.log()` automatically attaches unit metadata. Unit metadata can also be configured explicitly using `Telemetry.setProperty("fieldName", "unit", "\"volts\"")`.
+
+AdvantageKit also includes support for unit metadata when logging inputs and outputs (see [here](https://docs.advantagekit.org/data-flow/supported-types#units) for details).
 :::
 
 ### 🥉 Field Naming

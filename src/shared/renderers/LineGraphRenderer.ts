@@ -21,8 +21,11 @@ export default class LineGraphRenderer implements TabRenderer {
   private ROOT: HTMLElement;
   private CANVAS: HTMLCanvasElement;
   private SCROLL_OVERLAY: HTMLElement;
+  private HELP_OVERLAY: HTMLElement;
 
   private hasController: boolean;
+  private isFadingOut = false;
+  private zoomInAccumulator = 0;
   private scrollSensor: ScrollSensor;
   private lastRenderState = "";
   private mouseDownX = 0;
@@ -91,11 +94,29 @@ export default class LineGraphRenderer implements TabRenderer {
       window.selection.goIdle();
     });
 
+    this.HELP_OVERLAY = root.getElementsByClassName("line-graph-help")[0] as HTMLElement;
+
     // Scroll handling
-    this.scrollSensor = new ScrollSensor(this.SCROLL_OVERLAY, (dx: number, dy: number) => {
-      if (root.hidden) return;
-      window.selection.applyTimelineScroll(dx, dy, this.SCROLL_OVERLAY.clientWidth);
-    });
+    this.scrollSensor = new ScrollSensor(
+      this.SCROLL_OVERLAY,
+      (dx: number, dy: number, isPan: boolean, _cursorX: number, _cursorY: number) => {
+        if (root.hidden) return;
+        window.selection.applyTimelineScroll(dx, isPan ? 0 : dy, this.SCROLL_OVERLAY.clientWidth);
+
+        if (window.preferences && !window.preferences.hasScrolledLineGraph && !this.isFadingOut) {
+          if (dy < 0) {
+            this.zoomInAccumulator += dy;
+            if (this.zoomInAccumulator <= -200) {
+              this.isFadingOut = true;
+              this.HELP_OVERLAY.classList.add("fading-out");
+              setTimeout(() => {
+                window.sendMainMessage("update-preferences", { hasScrolledLineGraph: true });
+              }, 1000);
+            }
+          }
+        }
+      }
+    );
   }
 
   getAspectRatio(): number | null {
@@ -116,6 +137,17 @@ export default class LineGraphRenderer implements TabRenderer {
 
   render(command: LineGraphRendererCommand): void {
     this.scrollSensor.periodic();
+
+    // Update help overlay
+    if (this.HELP_OVERLAY) {
+      const hasScrolled = window.preferences?.hasScrolledLineGraph ?? false;
+      this.HELP_OVERLAY.style.display = hasScrolled ? "none" : "flex";
+      if (hasScrolled) {
+        this.isFadingOut = false;
+        this.zoomInAccumulator = 0;
+        this.HELP_OVERLAY.classList.remove("fading-out");
+      }
+    }
 
     // Initial setup and scaling
     const timeRange = command.timeRange;
@@ -144,8 +176,16 @@ export default class LineGraphRenderer implements TabRenderer {
       command.rightUnits,
       command.priorityAxis,
       this.lastCursorX,
+      window.preferences?.timestamps,
+      command.displayOffset,
       command.leftFields.map((field) => [field.values.length, field.color, field.type, field.size]),
-      command.discreteFields.map((field) => [field.values.length, field.color, field.type, field.toggleReference]),
+      command.discreteFields.map((field) => [
+        field.values.length,
+        field.color,
+        field.type,
+        field.toggleReference,
+        field.colorMap ? field.values : null // Specific values affect color-mapped fields so serialize full state
+      ]),
       command.rightFields.map((field) => [field.values.length, field.color, field.type, field.size]),
       command.alerts.map((row) => row.map((alert) => [alert.type, alert.text, alert.range]))
     ];
@@ -202,7 +242,17 @@ export default class LineGraphRenderer implements TabRenderer {
     if (graphWidth < 1) graphWidth = 1;
 
     // Calculate X step size
-    let timeStepSize = calcAxisStepSize(command.timeRange, graphWidth, this.X_STEP_TARGET_PX);
+    let displayOffset = command.displayOffset;
+    let displayTimeRange: [number, number] = [
+      command.timeRange[0] + displayOffset,
+      command.timeRange[1] + displayOffset
+    ];
+    let maxTime = Math.max(Math.abs(displayTimeRange[0]), Math.abs(displayTimeRange[1]));
+    let intDigits = maxTime > 0 ? Math.log10(maxTime) + 1 : 1;
+    let timeSpan = displayTimeRange[1] - displayTimeRange[0];
+    let decDigits = timeSpan < 1 && timeSpan > 0 ? -Math.log10(timeSpan) : 0;
+    let extraDigits = Math.max(0, intDigits + decDigits - 3);
+    let timeStepSize = calcAxisStepSize(displayTimeRange, graphWidth, this.X_STEP_TARGET_PX + extraDigits * 12);
 
     // Update scroll layout
     this.SCROLL_OVERLAY.style.left = graphLeft.toString() + "px";
@@ -248,7 +298,15 @@ export default class LineGraphRenderer implements TabRenderer {
         // Draw shape
         toggle = !toggle;
         if (field.type === "stripes") {
-          context.fillStyle = toggle ? shiftColor(field.color, -30) : shiftColor(field.color, 30);
+          let baseColor =
+            field.colorMap && field.colorMap[field.values[i + skippedSamples]]
+              ? field.colorMap[field.values[i + skippedSamples]]
+              : field.color;
+          context.fillStyle = field.colorMap
+            ? baseColor
+            : toggle
+            ? shiftColor(baseColor, -30)
+            : shiftColor(baseColor, 30);
           context.fillRect(startX, topY, endX - startX, 15);
         } else {
           let startY = toggle ? topY + 15 : topY;
@@ -261,10 +319,18 @@ export default class LineGraphRenderer implements TabRenderer {
         // Draw text
         let adjustedStartX = startX < graphLeft ? graphLeft : startX;
         if (endX - adjustedStartX > 10) {
+          let baseColor =
+            field.colorMap && field.colorMap[field.values[i + skippedSamples]]
+              ? field.colorMap[field.values[i + skippedSamples]]
+              : field.color;
           if (field.type === "stripes") {
-            context.fillStyle = toggle ? shiftColor(field.color, 130) : shiftColor(field.color, -130);
+            context.fillStyle = field.colorMap
+              ? shiftColor(baseColor, light ? -130 : 130)
+              : toggle
+              ? shiftColor(baseColor, 130)
+              : shiftColor(baseColor, -130);
           } else {
-            context.fillStyle = field.color;
+            context.fillStyle = baseColor;
           }
           context.fillText(
             field.values[i + skippedSamples],
@@ -380,14 +446,17 @@ export default class LineGraphRenderer implements TabRenderer {
             break;
 
           case "points":
-            let radius = field.size === "normal" ? 1 : 2;
+            let deltaX = graphWidth / Math.max(1, field.timestamps.length - 1);
+            console.log(deltaX);
+            let radius = clampValue(Math.log(deltaX * 3.0), 1.0, 5.0);
+            context.beginPath();
             for (let i = 0; i < field.timestamps.length; i++) {
               let x = xScaler.calculate(field.timestamps[i]);
               let y = yScaler.calculate(field.values[i]);
-              context.beginPath();
+              context.moveTo(x + radius, y);
               context.arc(x, y, radius, 0, Math.PI * 2);
-              context.fill();
             }
+            context.fill();
             break;
         }
       });
@@ -441,9 +510,15 @@ export default class LineGraphRenderer implements TabRenderer {
     }
 
     // Use similar logic as main axes but with an extra decimal point of precision to format the popup timestamps
-    let formatMarkedTimestampText = (time: number): string => {
+    let isStartAt0 = window.preferences?.timestamps !== "original";
+    let formatMarkedTimestampText = (time: number, isDelta: boolean = false): string => {
+      let displayTime = isDelta ? time : time + displayOffset;
       let fractionDigits = Math.max(0, -Math.floor(Math.log10(timeStepSize / 10)));
-      return time.toFixed(fractionDigits) + "s";
+      let text = displayTime.toFixed(fractionDigits) + "s";
+      if (isStartAt0 && !isDelta) {
+        text = "+" + text;
+      }
+      return text;
     };
 
     // Write formatted timestamp popups to graph view
@@ -516,7 +591,7 @@ export default class LineGraphRenderer implements TabRenderer {
         hoveredX = hoveredX as number;
         hoveredText = hoveredText as string;
 
-        let deltaText = "\u0394" + formatMarkedTimestampText(command.hoveredTime - command.selectedTime);
+        let deltaText = "\u0394" + formatMarkedTimestampText(command.hoveredTime - command.selectedTime, true);
         let xSpace = clampValue(selectedX, graphLeft, graphLeft + graphWidth) - hoveredX;
         let textHalfWidths =
           (context.measureText(selectedText).width + 10) / 2 + (context.measureText(hoveredText).width + 10) / 2 + 4;
@@ -644,10 +719,10 @@ export default class LineGraphRenderer implements TabRenderer {
 
     // Render x axis
     context.textAlign = "center";
-    let stepPos = Math.ceil(cleanFloat(timeRange[0] / timeStepSize)) * timeStepSize;
+    let stepPos = Math.ceil(cleanFloat(displayTimeRange[0] / timeStepSize)) * timeStepSize;
     let iterCount = 0;
     while (iterCount++ < 100) {
-      let x = scaleValue(stepPos, timeRange, [graphLeft, graphLeft + graphWidth]);
+      let x = scaleValue(stepPos, displayTimeRange, [graphLeft, graphLeft + graphWidth]);
 
       // Clean up final x (scroll can cause rounding problems)
       if (x - graphLeft - graphWidth > 1) {
@@ -657,6 +732,9 @@ export default class LineGraphRenderer implements TabRenderer {
       }
 
       let text = cleanFloat(stepPos).toString() + "s";
+      if (isStartAt0) {
+        text = "+" + text;
+      }
 
       context.globalAlpha = 1;
       context.fillText(text, x, graphTop + graphHeight + 15);
@@ -684,6 +762,7 @@ export default class LineGraphRenderer implements TabRenderer {
 
 export type LineGraphRendererCommand = {
   timeRange: [number, number];
+  displayOffset: number;
   selectionMode: SelectionMode;
   selectedTime: number | null;
   hoveredTime: number | null;
@@ -716,6 +795,7 @@ export type LineGraphRendererCommand_DiscreteField = {
   timestamps: number[];
   values: string[];
   color: string;
+  colorMap?: { [key: string]: string };
   type: "stripes" | "graph";
   toggleReference: boolean;
 };

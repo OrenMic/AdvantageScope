@@ -5,8 +5,8 @@
 // license that can be found in the LICENSE file
 // at the root directory of this project.
 
-import { app, dialog, shell } from "electron";
-import fetch from "electron-fetch";
+import { app, dialog, net, shell } from "electron";
+import { formatDate } from "../../shared/util";
 import { GITHUB_REPOSITORY } from "../github";
 import { isBeta } from "./betaUtil";
 import { WINDOW_ICON } from "./ElectronConstants";
@@ -36,8 +36,7 @@ export default class UpdateChecker {
     // Read release data from GitHub
     let releaseData;
     try {
-      // @ts-ignore
-      let response = await fetch.default("https://api.github.com/repos/" + GITHUB_REPOSITORY + "/releases", {
+      let response = await net.fetch("https://api.github.com/repos/" + GITHUB_REPOSITORY + "/releases", {
         method: "GET",
         headers: {
           pragma: "no-cache",
@@ -83,7 +82,7 @@ export default class UpdateChecker {
     let latestVersionInfo = releaseData[0];
     this.latestVersion = latestVersionInfo["tag_name"].slice(1);
     let latestDate = new Date(latestVersionInfo["published_at"]);
-    let latestDateText = latestDate.toLocaleDateString();
+    let latestDateText = formatDate(latestDate);
     let translated = process.arch !== "arm64" && app.runningUnderARM64Translation;
 
     // Update alert settings

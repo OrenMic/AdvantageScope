@@ -7,33 +7,26 @@
 
 import { BuiltIn3dFields } from "../../shared/AdvantageScopeAssets";
 import { SourceListItemState, SourceListOptionValueConfig, SourceListState } from "../../shared/SourceListConfig";
-import { DISTRIBUTION, Distribution } from "../../shared/buildConstants";
+import { IS_LITE } from "../../shared/buildConstants";
 import {
   APRIL_TAG_16H5_COUNT,
   APRIL_TAG_36H11_COUNT,
   AnnotatedPose3d,
-  SwerveState,
+  ModuleVelocity,
   grabHeatmapData,
+  grabModuleVelocities,
   grabPosesAuto,
-  grabSwerveStates,
   rotationSequenceToQuaternion
 } from "../../shared/geometry";
-import {
-  ALLIANCE_KEYS,
-  DRIVER_STATION_KEYS,
-  MechanismState,
-  getDriverStation,
-  getIsRedAlliance,
-  getMechanismState,
-  getOrDefault,
-  mergeMechanismStates
-} from "../../shared/log/LogUtil";
+import { MechanismState, getMechanismState, mergeMechanismStates } from "../../shared/log/LogMechanismState";
+import { getOrDefault } from "../../shared/log/LogUtil";
 import LoggableType from "../../shared/log/LoggableType";
+import { ALLIANCE_KEYS, DRIVER_STATION_KEYS, getDriverStation, getIsRedAlliance } from "../../shared/log/RobotState";
 import { Field3dRendererCommand, Field3dRendererCommand_AnyObj } from "../../shared/renderers/Field3dRenderer";
 import { clampValue, createUUID } from "../../shared/util";
 import SourceList from "../SourceList";
 import Field3dController_Config from "./Field3dController_Config";
-import TabController from "./TabController";
+import TabController, { setupKeyboardControls } from "./TabController";
 
 export default class Field3dController implements TabController {
   UUID = createUUID();
@@ -42,7 +35,6 @@ export default class Field3dController implements TabController {
   private FIELD_SELECT: HTMLSelectElement;
 
   private sourceList: SourceList;
-  private lastIsFTCField = false;
 
   constructor(root: HTMLElement) {
     this.sourceList = new SourceList(
@@ -55,26 +47,27 @@ export default class Field3dController implements TabController {
     this.FIELD_SELECT = settings.getElementsByClassName("field-select")[0] as HTMLSelectElement;
 
     // Set up XR button
-    if (DISTRIBUTION === Distribution.Lite) {
+    if (IS_LITE) {
       Array.from(settings.getElementsByClassName("xr-control")).forEach((element) => {
         let htmlElement = element as HTMLElement;
         htmlElement.parentElement?.removeChild(htmlElement);
       });
     }
+    setupKeyboardControls(this.XR_BUTTON);
     this.XR_BUTTON.addEventListener("click", () => {
       window.sendMainMessage("open-xr", this.UUID);
     });
 
     // Set up game select
     this.FIELD_SELECT.addEventListener("change", () => {
-      this.updateFieldDependentControls();
-      let fieldConfig = [...(window.assets === null ? [] : window.assets.field3ds), ...BuiltIn3dFields].find(
-        (field) => field.id === this.FIELD_SELECT.value
-      );
-      if (fieldConfig !== undefined) {
-        if (fieldConfig.isFTC && !this.lastIsFTCField) window.sendMainMessage("ftc-experimental-warning");
-        this.lastIsFTCField = fieldConfig.isFTC;
+      let isFTC = [...(window.assets === null ? [] : window.assets.field3ds), ...BuiltIn3dFields].find(
+        (game) => game.id === this.FIELD_SELECT.value
+      )?.isFTC;
+      if (isFTC !== undefined) {
+        if (window.preferences) window.preferences.prefersFTC = isFTC;
+        window.sendMainMessage("update-preferences", { prefersFTC: isFTC });
       }
+      this.updateFieldDependentControls();
     });
     this.updateFieldOptions();
     this.updateRobotOptions();
@@ -113,9 +106,28 @@ export default class Field3dController implements TabController {
     if (options.includes(value)) {
       this.FIELD_SELECT.value = value;
     } else {
-      this.FIELD_SELECT.selectedIndex = 0;
+      this.selectDefaultField();
     }
     this.updateFieldDependentControls();
+  }
+
+  /** Selects the default field based on whether the user prefers FTC. */
+  private selectDefaultField() {
+    let prefersFTC = window.preferences?.prefersFTC ?? false;
+    let primaryGroup = prefersFTC
+      ? (this.FIELD_SELECT.lastElementChild as HTMLElement)
+      : (this.FIELD_SELECT.firstElementChild as HTMLElement);
+    let secondaryGroup = prefersFTC
+      ? (this.FIELD_SELECT.firstElementChild as HTMLElement)
+      : (this.FIELD_SELECT.lastElementChild as HTMLElement);
+
+    if (primaryGroup.children.length > 0) {
+      this.FIELD_SELECT.value = (primaryGroup.children[0] as HTMLOptionElement).value;
+    } else if (secondaryGroup.children.length > 0) {
+      this.FIELD_SELECT.value = (secondaryGroup.children[0] as HTMLOptionElement).value;
+    } else {
+      this.FIELD_SELECT.selectedIndex = 0;
+    }
   }
 
   /** Updates source list with the latest robot models. */
@@ -136,9 +148,7 @@ export default class Field3dController implements TabController {
       return { key: name, display: name };
     });
     this.sourceList.setOptionValues("robot", "model", sourceListValues);
-    this.sourceList.setOptionValues("robotLegacy", "model", sourceListValues);
     this.sourceList.setOptionValues("ghost", "model", sourceListValues);
-    this.sourceList.setOptionValues("ghostLegacy", "model", sourceListValues);
   }
 
   /** Updates the robots, source button, and other options based on the selected value. */
@@ -160,13 +170,13 @@ export default class Field3dController implements TabController {
       return { key: name, display: name };
     });
     this.sourceList.setOptionValues("gamePiece", "variant", sourceListValues);
-    this.sourceList.setOptionValues("gamePieceLegacy", "variant", sourceListValues);
 
     // Update AprilTag variants
     let aprilTagVariants: { key: string; display: string }[] = fieldConfig?.isFTC
       ? [
           { key: "36h11-2in", display: "2 in" },
           { key: "36h11-3in", display: "3 in" },
+          { key: "36h11-3.25in", display: "3.25 in" },
           { key: "36h11-4in", display: "4 in" },
           { key: "36h11-5in", display: "5 in" },
           { key: "36h11-6.5in", display: "6.5 in" }
@@ -176,7 +186,6 @@ export default class Field3dController implements TabController {
           { key: "16h5-6in", display: "16h5" }
         ];
     this.sourceList.setOptionValues("aprilTag", "variant", aprilTagVariants);
-    this.sourceList.setOptionValues("aprilTagLegacy", "variant", aprilTagVariants);
 
     this.updateRobotOptions();
   }
@@ -198,13 +207,7 @@ export default class Field3dController implements TabController {
     if ("game" in state && typeof state.game === "string") {
       this.FIELD_SELECT.value = state.game;
       if (this.FIELD_SELECT.value === "") {
-        this.FIELD_SELECT.selectedIndex = 0;
-      }
-      let fieldConfig = [...(window.assets === null ? [] : window.assets.field3ds), ...BuiltIn3dFields].find(
-        (field) => field.id === this.FIELD_SELECT.value
-      );
-      if (fieldConfig !== undefined) {
-        this.lastIsFTCField = fieldConfig.isFTC;
+        this.selectDefaultField();
       }
     }
     this.updateFieldDependentControls();
@@ -263,35 +266,12 @@ export default class Field3dController implements TabController {
       }
 
       // Get pose data
-      let numberArrayFormat: "Translation2d" | "Translation3d" | "Pose2d" | "Pose3d" = "Pose3d";
-      let numberArrayUnits: "radians" | "degrees" = "radians";
-      if ("format" in source.options) {
-        let formatRaw = source.options.format;
-        numberArrayFormat =
-          formatRaw === "Pose2d" ||
-          formatRaw === "Pose3d" ||
-          formatRaw === "Translation2d" ||
-          formatRaw === "Translation3d"
-            ? formatRaw
-            : "Pose3d";
-      }
-      if ("units" in source.options) {
-        numberArrayUnits = source.options.units === "degrees" ? "degrees" : "radians";
-      }
-      let isHeatmap = source.type === "heatmap" || source.type === "heatmapLegacy";
+      let isHeatmap = source.type === "heatmap";
       let poses: AnnotatedPose3d[] = [];
 
       if (!isHeatmap) {
         if (time !== null) {
-          poses = grabPosesAuto(
-            window.log,
-            source.logKey,
-            source.logType,
-            time,
-            this.UUID,
-            numberArrayFormat,
-            numberArrayUnits
-          );
+          poses = grabPosesAuto(window.log, source.logKey, source.logType, time, this.UUID);
         }
       } else {
         let timeRange: "enabled" | "auto" | "teleop" | "teleop-no-endgame" | "full" | "visible" = "enabled";
@@ -307,15 +287,7 @@ export default class Field3dController implements TabController {
               ? timeRangeRaw
               : "enabled";
         }
-        poses = grabHeatmapData(
-          window.log,
-          source.logKey,
-          source.logType,
-          timeRange,
-          this.UUID,
-          numberArrayFormat,
-          numberArrayUnits
-        );
+        poses = grabHeatmapData(window.log, source.logKey, source.logType, timeRange, this.UUID);
       }
 
       // Add data from children
@@ -323,19 +295,16 @@ export default class Field3dController implements TabController {
       let mechanismsXZ: MechanismState[] = [];
       let mechanismsYZ: MechanismState[] = [];
       let visionTargets: AnnotatedPose3d[] = [];
-      let swerveStates: {
-        values: SwerveState[];
+      let swerveModuleVelocities: {
+        values: ModuleVelocity[];
         color: string;
       }[] = [];
       if (time !== null) {
         children.forEach((child) => {
           switch (child.type) {
-            case "component":
-            case "componentLegacy": {
+            case "component": {
               // Components are always 3D poses so assume number array format
-              components = components.concat(
-                grabPosesAuto(window.log, child.logKey, child.logType, time!, this.UUID, "Pose3d")
-              );
+              components = components.concat(grabPosesAuto(window.log, child.logKey, child.logType, time!, this.UUID));
               break;
             }
 
@@ -349,9 +318,9 @@ export default class Field3dController implements TabController {
 
             case "rotationOverride":
             case "rotationOverrideLegacy": {
-              let numberArrayUnits: "radians" | "degrees" = "radians";
+              let numberRotationUnits: "radians" | "degrees" = "radians";
               if ("units" in child.options) {
-                numberArrayUnits = child.options.units === "degrees" ? "degrees" : "radians";
+                numberRotationUnits = child.options.units === "degrees" ? "degrees" : "radians";
               }
               let rotations = grabPosesAuto(
                 window.log,
@@ -359,8 +328,7 @@ export default class Field3dController implements TabController {
                 child.logType,
                 time!,
                 this.UUID,
-                undefined,
-                numberArrayUnits
+                numberRotationUnits
               );
               if (rotations.length > 0) {
                 poses.forEach((value) => {
@@ -370,28 +338,8 @@ export default class Field3dController implements TabController {
               break;
             }
 
-            case "vision":
-            case "visionLegacy": {
-              let numberArrayFormat: "Translation2d" | "Translation3d" | "Pose2d" | "Pose3d" | undefined = undefined;
-              if ("format" in child.options) {
-                let formatRaw = child.options.format;
-                numberArrayFormat =
-                  formatRaw === "Pose2d" ||
-                  formatRaw === "Pose3d" ||
-                  formatRaw === "Translation2d" ||
-                  formatRaw === "Translation3d"
-                    ? formatRaw
-                    : "Pose2d";
-              }
-              let newVisionTargets = grabPosesAuto(
-                window.log,
-                child.logKey,
-                child.logType,
-                time!,
-                this.UUID,
-                numberArrayFormat,
-                "radians"
-              );
+            case "vision": {
+              let newVisionTargets = grabPosesAuto(window.log, child.logKey, child.logType, time!, this.UUID);
               newVisionTargets.forEach((annotatedPose) => {
                 annotatedPose.annotation.visionColor = child.options.color;
                 annotatedPose.annotation.visionSize = child.options.size;
@@ -400,22 +348,9 @@ export default class Field3dController implements TabController {
               break;
             }
 
-            case "swerveStates":
-            case "swerveStatesLegacy": {
-              let numberArrayUnits: "radians" | "degrees" = "radians";
-              if ("units" in child.options) {
-                numberArrayUnits = child.options.units === "degrees" ? "degrees" : "radians";
-              }
-              let states = grabSwerveStates(
-                window.log,
-                child.logKey,
-                child.logType,
-                time!,
-                child.options.arrangement,
-                numberArrayUnits,
-                this.UUID
-              );
-              swerveStates.push({
+            case "swerveModuleVelocities": {
+              let states = grabModuleVelocities(window.log, child.logKey, time!, child.options.arrangement, this.UUID);
+              swerveModuleVelocities.push({
                 values: states,
                 color: child.options.color
               });
@@ -431,7 +366,10 @@ export default class Field3dController implements TabController {
                 [],
                 this.UUID
               );
-              let tagCount = source.options.variant === "16h5" ? APRIL_TAG_16H5_COUNT : APRIL_TAG_36H11_COUNT;
+              let tagCount =
+                typeof source.options.variant === "string" && source.options.variant.startsWith("16h5")
+                  ? APRIL_TAG_16H5_COUNT
+                  : APRIL_TAG_36H11_COUNT;
               values.forEach((id) => {
                 id = clampValue(Math.floor(id), 0, tagCount - 1);
                 let index = poses.findIndex((value) => value.annotation.aprilTagId === undefined);
@@ -447,12 +385,11 @@ export default class Field3dController implements TabController {
       let mechanismXZ = mechanismsXZ.length === 0 ? null : mergeMechanismStates(mechanismsXZ);
       let mechanismYZ = mechanismsYZ.length === 0 ? null : mergeMechanismStates(mechanismsYZ);
       visionTargets.reverse();
-      swerveStates.reverse();
+      swerveModuleVelocities.reverse();
 
       // Add object
       switch (source.type) {
         case "robot":
-        case "robotLegacy":
           objects.push({
             type: "robot",
             model: source.options.model,
@@ -463,11 +400,10 @@ export default class Field3dController implements TabController {
               yz: mechanismYZ
             },
             visionTargets: visionTargets,
-            swerveStates: swerveStates
+            swerveModuleVelocities: swerveModuleVelocities
           });
           break;
         case "ghost":
-        case "ghostLegacy":
           objects.push({
             type: "ghost",
             color: source.options.color,
@@ -479,11 +415,10 @@ export default class Field3dController implements TabController {
               yz: mechanismYZ
             },
             visionTargets: visionTargets,
-            swerveStates: swerveStates
+            swerveModuleVelocities: swerveModuleVelocities
           });
           break;
         case "gamePiece":
-        case "gamePieceLegacy":
           objects.push({
             type: "gamePiece",
             variant: source.options.variant,
@@ -491,7 +426,6 @@ export default class Field3dController implements TabController {
           });
           break;
         case "trajectory":
-        case "trajectoryLegacy":
           objects.push({
             type: "trajectory",
             color: source.options.color,
@@ -500,14 +434,12 @@ export default class Field3dController implements TabController {
           });
           break;
         case "heatmap":
-        case "heatmapLegacy":
           objects.push({
             type: "heatmap",
             poses: poses
           });
           break;
         case "aprilTag":
-        case "aprilTagLegacy":
           const variantRaw = source.options.variant as string;
           const parts = variantRaw.split("-");
           const family = parts[0] as "36h11" | "16h5";
@@ -519,14 +451,12 @@ export default class Field3dController implements TabController {
           });
           break;
         case "axes":
-        case "axesLegacy":
           objects.push({
             type: "axes",
             poses: poses
           });
           break;
         case "cone":
-        case "coneLegacy":
           let positionRaw = source.options.position;
           let position: "center" | "back" | "front" =
             positionRaw === "center" || positionRaw === "back" || positionRaw === "front" ? positionRaw : "center";
@@ -538,7 +468,6 @@ export default class Field3dController implements TabController {
           });
           break;
         case "cameraOverride":
-        case "cameraOverrideLegacy":
           if (cameraOverride === null) {
             cameraOverride = poses[0];
           }
@@ -580,7 +509,7 @@ export default class Field3dController implements TabController {
     let allRobotModels: Set<string> = new Set();
     let allSources = this.sourceList.getState();
     allSources.forEach((source) => {
-      if (["robot", "robotLegacy", "ghost", "ghostLegacy"].includes(source.type)) {
+      if (["robot", "ghost"].includes(source.type)) {
         allRobotModels.add(source.options.model);
       }
     });

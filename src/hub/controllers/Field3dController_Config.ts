@@ -18,7 +18,7 @@ const Field3dController_Config: SourceListConfig = {
     {
       key: "robot",
       display: "Robot",
-      symbol: "location.fill",
+      symbol: "nearme",
       showInTypeName: false,
       color: "#000000",
       darkColor: "#ffffff",
@@ -42,55 +42,13 @@ const Field3dController_Config: SourceListConfig = {
         }
       ],
       initialSelectionOption: "model",
-      parentKey: "robot",
-      previewType: "Pose3d"
-    },
-    {
-      key: "robotLegacy",
-      display: "Robot",
-      symbol: "location.fill",
-      showInTypeName: false,
-      color: "#000000",
-      darkColor: "#ffffff",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "model",
-          display: "Model",
-          showInTypeName: true,
-          values: []
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        },
-        {
-          key: "units",
-          display: "Rotation Units",
-          showInTypeName: false,
-          values: [
-            { key: "radians", display: "Radians" },
-            { key: "degrees", display: "Degrees" }
-          ]
-        }
-      ],
-      initialSelectionOption: "model",
-      numberArrayDeprecated: true,
       parentKey: "robot",
       previewType: "Pose3d"
     },
     {
       key: "ghost",
       display: "Ghost",
-      symbol: "location.fill.viewfinder",
+      symbol: "nearmeoutline",
       showInTypeName: true,
       color: "color",
       sourceTypes: [
@@ -123,56 +81,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "ghostLegacy",
-      display: "Ghost",
-      symbol: "location.fill.viewfinder",
-      showInTypeName: true,
-      color: "color",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "model",
-          display: "Model",
-          showInTypeName: true,
-          values: []
-        },
-        {
-          key: "color",
-          display: "Color",
-          showInTypeName: false,
-          values: NeonColors
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        },
-        {
-          key: "units",
-          display: "Rotation Units",
-          showInTypeName: false,
-          values: [
-            { key: "radians", display: "Radians" },
-            { key: "degrees", display: "Degrees" }
-          ]
-        }
-      ],
-      initialSelectionOption: "model",
-      parentKey: "robot",
-      numberArrayDeprecated: true,
-      previewType: "Pose3d"
-    },
-    {
       key: "component",
       display: "Component",
-      symbol: "puzzlepiece.extension.fill",
+      symbol: "extension",
       showInTypeName: true,
       color: "#9370db",
       sourceTypes: ["Pose3d", "Pose3d[]", "Transform3d", "Transform3d[]"],
@@ -182,22 +93,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "componentLegacy",
-      display: "Component",
-      symbol: "puzzlepiece.extension.fill",
-      showInTypeName: true,
-      color: "#9370db",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [],
-      childOf: "robot",
-      numberArrayDeprecated: true,
-      previewType: "Pose3d"
-    },
-    {
       key: "mechanism",
       display: "Mechanism",
-      symbol: "gearshape.fill",
+      symbol: "settings",
       showInTypeName: true,
       color: "#888888",
       sourceTypes: ["Mechanism2d"],
@@ -218,7 +116,7 @@ const Field3dController_Config: SourceListConfig = {
     {
       key: "vision",
       display: "Vision Target",
-      symbol: "scope",
+      symbol: "target",
       showInTypeName: true,
       color: "color",
       sourceTypes: [
@@ -257,52 +155,12 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Translation3d"
     },
     {
-      key: "visionLegacy",
-      display: "Vision Target",
-      symbol: "scope",
+      key: "swerveModuleVelocities",
+      display: "Swerve Module Velocities",
+      symbol: "zoomoutmap",
       showInTypeName: true,
       color: "color",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "color",
-          display: "Color",
-          showInTypeName: false,
-          values: NeonColors
-        },
-        {
-          key: "size",
-          display: "Thickness",
-          showInTypeName: false,
-          values: [
-            { key: "normal", display: "Normal" },
-            { key: "bold", display: "Bold" }
-          ]
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        }
-      ],
-      numberArrayDeprecated: true,
-      childOf: "robot",
-      previewType: "Translation3d"
-    },
-    {
-      key: "swerveStates",
-      display: "Swerve States",
-      symbol: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left",
-      showInTypeName: true,
-      color: "color",
-      sourceTypes: ["SwerveModuleState[]"],
+      sourceTypes: ["SwerveModuleVelocity[]", "SwerveModuleState[]"],
       showDocs: true,
       options: [
         {
@@ -320,48 +178,12 @@ const Field3dController_Config: SourceListConfig = {
       ],
       initialSelectionOption: "color",
       childOf: "robot",
-      previewType: "SwerveModuleState[]"
-    },
-    {
-      key: "swerveStatesLegacy",
-      display: "Swerve States",
-      symbol: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left",
-      showInTypeName: true,
-      color: "color",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "color",
-          display: "Color",
-          showInTypeName: false,
-          values: NeonColors_RedStart
-        },
-        {
-          key: "arrangement",
-          display: "Arrangement",
-          showInTypeName: false,
-          values: SwerveArrangementValues
-        },
-        {
-          key: "units",
-          display: "Rotation Units",
-          showInTypeName: false,
-          values: [
-            { key: "radians", display: "Radians" },
-            { key: "degrees", display: "Degrees" }
-          ]
-        }
-      ],
-      initialSelectionOption: "color",
-      numberArrayDeprecated: true,
-      childOf: "robot",
-      previewType: "SwerveModuleState[]"
+      previewType: "ModuleVelocities"
     },
     {
       key: "rotationOverride",
       display: "Rotation Override",
-      symbol: "angle",
+      symbol: "360",
       showInTypeName: true,
       color: "#000000",
       darkColor: "#ffffff",
@@ -374,7 +196,7 @@ const Field3dController_Config: SourceListConfig = {
     {
       key: "rotationOverrideLegacy",
       display: "Rotation Override",
-      symbol: "angle",
+      symbol: "360",
       showInTypeName: true,
       color: "#000000",
       darkColor: "#ffffff",
@@ -397,7 +219,7 @@ const Field3dController_Config: SourceListConfig = {
     {
       key: "gamePiece",
       display: "Game Piece",
-      symbol: "star.fill",
+      symbol: "chesspawn",
       showInTypeName: false,
       color: "#ffd700",
       sourceTypes: ["Pose3d", "Pose3d[]", "Transform3d", "Transform3d[]", "Translation3d", "Translation3d[]"],
@@ -414,38 +236,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "gamePieceLegacy",
-      display: "Game Piece",
-      symbol: "star.fill",
-      showInTypeName: false,
-      color: "#ffd700",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "variant",
-          display: "Variant",
-          showInTypeName: true,
-          values: []
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        }
-      ],
-      initialSelectionOption: "variant",
-      numberArrayDeprecated: true,
-      previewType: "Pose3d"
-    },
-    {
       key: "trajectory",
       display: "Trajectory",
-      symbol: "point.bottomleft.forward.to.point.topright.scurvepath.fill",
+      symbol: "conversionpath",
       showInTypeName: true,
       color: "color",
       sourceTypes: [
@@ -480,48 +273,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Translation3d"
     },
     {
-      key: "trajectoryLegacy",
-      display: "Trajectory",
-      symbol: "point.bottomleft.forward.to.point.topright.scurvepath.fill",
-      showInTypeName: true,
-      color: "color",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "color",
-          display: "Color",
-          showInTypeName: false,
-          values: NeonColors
-        },
-        {
-          key: "size",
-          display: "Thickness",
-          showInTypeName: false,
-          values: [
-            { key: "normal", display: "Normal" },
-            { key: "bold", display: "Bold" }
-          ]
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        }
-      ],
-      numberArrayDeprecated: true,
-      previewType: "Translation3d"
-    },
-    {
       key: "heatmap",
       display: "Heatmap",
-      symbol: "map.fill",
+      symbol: "map",
       showInTypeName: true,
       color: "#ff0000",
       sourceTypes: [
@@ -558,44 +312,6 @@ const Field3dController_Config: SourceListConfig = {
       previewType: null
     },
     {
-      key: "heatmapLegacy",
-      display: "Heatmap",
-      symbol: "map.fill",
-      showInTypeName: true,
-      color: "#ff0000",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "timeRange",
-          display: "Time Range",
-          showInTypeName: false,
-          values: [
-            { key: "enabled", display: "Enabled" },
-            { key: "auto", display: "Auto" },
-            { key: "teleop", display: "Teleop" },
-            { key: "teleop-no-endgame", display: "Teleop (No Endgame)" },
-            { key: "full", display: "Full Log" },
-            { key: "visible", display: "Visible Range" }
-          ]
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        }
-      ],
-      initialSelectionOption: "timeRange",
-      numberArrayDeprecated: true,
-      previewType: null
-    },
-    {
       key: "aprilTag",
       display: "AprilTag",
       symbol: "qrcode",
@@ -617,31 +333,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "aprilTagLegacy",
-      display: "AprilTag",
-      symbol: "qrcode",
-      showInTypeName: true,
-      color: "#000000",
-      darkColor: "#ffffff",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "variant",
-          display: "Variant",
-          showInTypeName: true,
-          values: []
-        }
-      ],
-      numberArrayDeprecated: true,
-      parentKey: "aprilTag",
-      initialSelectionOption: "variant",
-      previewType: "Pose3d"
-    },
-    {
       key: "aprilTagIDs",
       display: "AprilTag IDs",
-      symbol: "number",
+      symbol: "numbers",
       showInTypeName: true,
       color: "#000000",
       darkColor: "#ffffff",
@@ -654,7 +348,7 @@ const Field3dController_Config: SourceListConfig = {
     {
       key: "axes",
       display: "Axes",
-      symbol: "move.3d",
+      symbol: "explore",
       showInTypeName: true,
       color: "#000000",
       darkColor: "#ffffff",
@@ -664,22 +358,9 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "axesLegacy",
-      display: "Axes",
-      symbol: "move.3d",
-      showInTypeName: true,
-      color: "#000000",
-      darkColor: "#ffffff",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [],
-      numberArrayDeprecated: true,
-      previewType: "Pose3d"
-    },
-    {
       key: "cone",
       display: "Cone",
-      symbol: "cone.fill",
+      symbol: "navigation",
       showInTypeName: true,
       color: "color",
       sourceTypes: [
@@ -716,76 +397,14 @@ const Field3dController_Config: SourceListConfig = {
       previewType: "Pose3d"
     },
     {
-      key: "coneLegacy",
-      display: "Cone",
-      symbol: "cone.fill",
-      showInTypeName: true,
-      color: "color",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [
-        {
-          key: "color",
-          display: "Color",
-          showInTypeName: false,
-          values: NeonColors
-        },
-        {
-          key: "position",
-          display: "Position",
-          showInTypeName: true,
-          values: [
-            { key: "center", display: "Center" },
-            { key: "back", display: "Back" },
-            { key: "front", display: "Front" }
-          ]
-        },
-        {
-          key: "format",
-          display: "Format",
-          showInTypeName: false,
-          values: [
-            { key: "Pose2d", display: "2D Pose(s)" },
-            { key: "Pose3d", display: "3D Pose(s)" },
-            { key: "Translation2d", display: "2D Translation(s)" },
-            { key: "Translation3d", display: "3D Translation(s)" }
-          ]
-        },
-        {
-          key: "units",
-          display: "Rotation Units",
-          showInTypeName: false,
-          values: [
-            { key: "radians", display: "Radians" },
-            { key: "degrees", display: "Degrees" }
-          ]
-        }
-      ],
-      initialSelectionOption: "color",
-      numberArrayDeprecated: true,
-      previewType: "Pose3d"
-    },
-    {
       key: "cameraOverride",
       display: "Camera Override",
-      symbol: "camera.fill",
+      symbol: "photocamera",
       showInTypeName: true,
       color: "#888888",
       sourceTypes: ["Pose3d", "Transform3d"],
       showDocs: true,
       options: [],
-      previewType: "Pose3d"
-    },
-    {
-      key: "cameraOverrideLegacy",
-      display: "Camera Override",
-      symbol: "camera.fill",
-      showInTypeName: true,
-      color: "#888888",
-      sourceTypes: ["NumberArray"],
-      showDocs: false,
-      options: [],
-      numberArrayDeprecated: true,
       previewType: "Pose3d"
     }
   ]

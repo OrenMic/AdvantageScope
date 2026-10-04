@@ -9,13 +9,13 @@ Please remember to behave with **Gracious Professionalism** in all interactions.
 - **Reliability is Paramount:** AdvantageScope is a critical tool for teams. Changes must not break existing visualization capabilities or log parsing.
 - **Backward Compatibility:** Changes should support existing log formats and configurations where possible. AdvantageScope is expected to continue opening logs generated in prior years (within reason). We may occasionally allow breaking changes to support long-term maintainability, but this should be avoided in most cases.
 - **Platform Parity:** AdvantageScope runs as a desktop application (Windows, macOS, and Linux) and a web application (AdvantageScope Lite). Most features should be supported in all environments unless prevented by technical limitations.
-- **Documentation:** Most code changes require corresponding updates to the documentation. Please ask us for help if you're not sure where to start.
+- **Documentation:** Most code changes require corresponding updates to the documentation. Please ask for help if you're not sure where to start.
 - **Broad Applicability:** Features should be useful to a wide range of teams. New logging formats should be broadly supported and useful to many users.
 
 ## What to Contribute
 
 - **Bug Reports & Fixes:** We welcome fixes for bugs found during or after the season. Please submit a GitHub issue first to track the bug.
-- **Feature Improvements:** Improvements to the AdvantageScope feature-set are welcome, but feature changes will generally not be merged until _after_ the competition season. For large changes, please open a GitHub issue or contact us at software@team6328.org before starting work.
+- **Feature Improvements:** Improvements to the AdvantageScope feature-set are welcome, but feature changes will generally not be merged until _after_ the competition season. For large changes, please open a GitHub issue or email software@team6328.org before starting work.
 
 ## Development Setup
 
@@ -36,7 +36,7 @@ cd AdvantageScope
 npm install
 ```
 
-_Note: The `postinstall` script will automatically handle downloading supplemental resources, including Tesseract language support, Owlet binaries, and bundled assets for AdvantageScope Lite.._
+_Note: The `postinstall` script will automatically handle downloading supplemental resources, including Tesseract language support, Owlet binaries, and bundled assets for AdvantageScope Lite._
 
 ## Building Distributions
 
@@ -62,6 +62,14 @@ export ASCOPE_DISTRIBUTION=WPILIB
 export ASCOPE_DISTRIBUTION=LITE
 ```
 
+- **Lite (Driver Station) Distribution:**
+
+```bash
+export ASCOPE_DISTRIBUTION=LITEDS
+```
+
+_For the Lite DS distribution, set the environment variable before running `npm install` to download the correct set of bundled assets._
+
 ## Available NPM Tasks
 
 The following tasks are defined in `package.json` to assist with development:
@@ -74,6 +82,7 @@ The following tasks are defined in `package.json` to assist with development:
 - `npm run fast-build`: Compiles and packages the application into a directory (unpacked) rather than an installer. Useful for quick local testing of the production build.
 - `npm run compile`: Runs Rollup to compile the TypeScript source bundles.
 - `npm run wasm:compile`: Compiles the C++ logic to WebAssembly (requires Emscripten).
+- `npm run watch`: Automatically recompiles bundles when files change.
 
 ### Documentation
 
@@ -84,34 +93,6 @@ The following tasks are defined in `package.json` to assist with development:
 
 - `npm run format`: Automatically fixes formatting issues using Prettier and adds license headers.
 - `npm run check-format`: Checks code for formatting errors without modifying files.
-
-## Developing in Watch Mode
-
-When developing, you can use `npm run watch` to automatically recompile bundles when files change. However, recompiling the entire application is often unnecessary and slow.
-
-To speed up development, we recommend building only the subset of bundles you are actively working on by passing flags to the watch command.
-
-**Usage:**
-
-```bash
-npm run watch -- [flags]
-```
-
-**Available Flags:**
-Refer to `rollup.config.mjs` for the specific bundle configurations:
-
-- `-- --configMain`: Rebuilds the main process and preload scripts.
-- `-- --configLargeRenderers`: Rebuilds the Hub and Satellite renderers (the main UI).
-- `-- --configSmallRenderers`: Rebuilds smaller pop-up windows (Preferences, Export, Unit Conversion, etc.).
-- `-- --configWorkers`: Rebuilds web workers (Log parsers, export workers, etc.).
-- `-- --configXR`: Rebuilds XR client scripts.
-
-**Example:**
-If you are only working on the main UI logic, run:
-
-```bash
-npm run watch -- --configLargeRenderers
-```
 
 ## Building for Multiple Platforms
 
@@ -137,15 +118,49 @@ npm run build -- --mac
 npm run build -- --linux
 ```
 
+## Signing & Notarization
+
+Windows, macOS, and iOS releases of AdvantageScope are signed by Littleton Robotics when distributing to users. Certificates are _not_ required for local development on Windows and macOS. See the section below on [iOS development](#ios-development) for details on AdvantageScope XR. Not all AdvantageScope development artifacts are signed in CI; please check the matrix below for details.
+
+| Platform | Release               | Upstream Push | Pull Requests & Forks |
+| -------- | --------------------- | ------------- | --------------------- |
+| Windows  | ✅ Signed             | ❌ Not Signed | ❌ Not Signed         |
+| macOS    | ✅ Signed & Notarized | ✅ Signed     | ❌ Not Signed         |
+| iOS      | ✅ Signed (App Store) | ❌ Not Signed | ❌ Not Signed         |
+
+## iOS Development
+
+AdvantageScope XR is located in the `xr/` directory and contains two targets in `xr/AdvantageScopeXR.xcodeproj`: `AdvantageScopeXR` (the full iOS/iPadOS app) and `AdvantageScopeXRClip` (the App Clip).
+
+### Testing in the iOS Simulator
+
+ARKit requires physical hardware, but the UI can be tested in the simulator. Simulator builds do not require code signing.
+
+1. Open `xr/AdvantageScopeXR.xcodeproj` in Xcode.
+2. Select the `AdvantageScopeXR` scheme and choose an iOS Simulator target (iPhone/iPad).
+3. Build and run.
+
+### Testing on a Physical iOS Device
+
+Free Apple Developer accounts (Personal Teams) cannot sign App Clip entitlements. To test on a physical device using a free account:
+
+1. In Xcode, select the `AdvantageScopeXR` project > `AdvantageScopeXR` target > `Signing & Capabilities`.
+2. Change the team to your personal team and update the bundle identifier to a unique prefix (e.g., `com.<username>.advantagescopexr`).
+3. In the `AdvantageScopeXR` target > `Build Phases`:
+   - Under `Dependencies`, remove `AdvantageScopeXRClip`.
+   - Under `Embed App Clips`, remove `AdvantageScopeXRClip.app` (or delete the build phase).
+4. On your iOS device, enable Developer Mode under `Settings` > `Privacy & Security` > `Developer Mode` (requires a restart).
+5. Build and run the app on your device from Xcode. On the first run, trust your developer certificate under `Settings` > `General` > `VPN & Device Management`.
+
 ## Bundled Assets
 
 AdvantageScope assets are stored in multiple locations:
 
 - The `bundledAssets` folder includes assets bundled in all versions of AdvantageScope, for both desktop and web distributions.
 - The [`AdvantageScopeAssets`](https://github.com/Mechanical-Advantage/AdvantageScopeAssets/releases) repository includes additional assets downloaded by the desktop version of AdvantageScope. Bundled assets are also available, which can be added to AdvantageScope Lite after installation.
-- The `bundleLiteAssets.mjs` script defines specific assets from the remote repository (2) to be bundled in AdvantageScope Lite for offline use.
+- The `bundleLiteAssets.mjs` script defines specific assets from the `AdvantageScopeAssets` repository to be bundled in AdvantageScope Lite for offline use.
 
-Please contact us at software@team6328.org if you are interested in contributing to the set of built-in AdvantageScope assets, including the files stored in the `AdvantageScopeAssets` repository.
+Please email software@team6328.org if you are interested in contributing to the set of built-in AdvantageScope assets, including the files stored in the `AdvantageScopeAssets` repository.
 
 ## Coding Guidelines & Formatting
 
@@ -180,7 +195,7 @@ It is highly recommended to run `npm run format` before every commit.
 
 ### Review
 
-Your code will be reviewed by maintainers, and we may request changes to ensure code style consistency, API stability, or performance. AdvantageScope is developed by volunteers, so code reviews may be delayed (especially during the competition season). Please reach out to us via GitHub or email (software@team6328.org) if you have any questions or concerns about an open pull request.
+Your code will be reviewed by maintainers, and we may request changes to ensure code style consistency, API stability, or performance. AdvantageScope is developed by volunteers, so code reviews may be delayed (especially during the competition season). Please reach out via GitHub or email (software@team6328.org) if you have any questions or concerns about an open pull request.
 
 ### Licensing
 
