@@ -361,7 +361,7 @@ export default class LineGraphController implements TabController {
     let logNum = 1;
     newLogKey = "/Log" + logNum + logKey;
     while (keyPresent(window.log, [newLogKey])) {
-      if (!existingKeys.includes(newLogKey)) sourceList.addField(newLogKey);
+      if (!existingKeys.includes(newLogKey)) sourceList.addField(newLogKey, {type: data.type});
       logNum++;
       newLogKey = "/Log" + logNum + logKey;
     }

@@ -820,6 +820,7 @@ async function handleHubMessage(window: BrowserWindow, message: NamedMessage) {
               click() {
                 sendMessage(window, "add-from-all-logs", {
                   logKey: state.logKey,
+                  type: state.type,
                   uuid: message.data.uuid
                 });
                 respond();
