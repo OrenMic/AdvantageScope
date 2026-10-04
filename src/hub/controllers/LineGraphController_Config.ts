@@ -101,15 +101,6 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
           values: GraphColors
         },
         {
-          key: "size",
-          display: "Size",
-          showInTypeName: false,
-          values: [
-            { key: "normal", display: "Normal" },
-            { key: "bold", display: "Large" }
-          ]
-        },
-        {
           key: "AddFromLogs",
           display: "Add from all logs ",
           showInTypeName: false,
