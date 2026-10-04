@@ -401,6 +401,7 @@ export default class SourceList {
     this.HAND_ICON.style.transition = show ? "opacity 1s ease-in 1s" : "";
     this.HAND_ICON.style.opacity = show ? "0.15" : "0";
   }
+
 /**
  * Adds a new field to the list, if the type is valid.
  *
@@ -409,7 +410,7 @@ export default class SourceList {
  * @param option.parentIndex The index of the parent item (optional)
  * @param option.type The type of the field to add (optional)
  */
-addField(logKey: string, option?: { parentIndex?: number; type?: string }) {
+  addField(logKey: string, option?: { parentIndex?: number; type?: string }) {
     let logType = window.log.getType(logKey);
     let logTypeString = logType === null ? null : LoggableType[logType];
     let structuredType = window.log.getStructuredType(logKey);
