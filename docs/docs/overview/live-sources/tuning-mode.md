@@ -10,6 +10,7 @@ By default, all values in AdvantageScope are read-only. To toggle tuning mode, *
 
 - To edit a **numeric field**, enter a new value using the text box to the right of the field in the sidebar. The value is published after the input is deselected or the "Enter" key is pressed. Leave the text box blank to use the robot-published value.
 - To toggle a **boolean field**, click the red or green circle to the right of the field in the sidebar.
+- To copy all published values to the clipboard, **right-click the slider icon** and select **"Copy Tuned Values"**.
 
 :::warning
 This feature is not intended for controlling the robot on the field. Dashboard-style inputs like choosers, trigger buttons, etc. are not supported.
@@ -17,7 +18,7 @@ This feature is not intended for controlling the robot on the field. Dashboard-s
 
 ## Tuning With AdvantageKit
 
-Fields published by AdvantageKit to the `AdvantageKit` subtable are output-only and cannot be edited. However, users can publish fields from user code that are tunable from AdvantageScope. **Any fields published to the "/Tuning" table on NetworkTables will appear under the "Tuning" table when using the "NetworkTables 4 (AdvantageKit)" live source.**
+Fields published by AdvantageKit to the `AdvantageKit` subtable are output-only and cannot be edited. However, users can publish fields from user code that are tunable from AdvantageScope. **Any fields published to the "/Tuning" table on NetworkTables will appear under the "Tuning" table when using the "NetworkTables (AdvantageKit)" live source.**
 
 For example, a tunable number can be published using the [`LoggedNetworkNumber`](https://docs.advantagekit.org/data-flow/recording-inputs/dashboard-inputs) class:
 

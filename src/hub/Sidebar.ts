@@ -5,7 +5,7 @@
 // license that can be found in the LICENSE file
 // at the root directory of this project.
 
-import { Distribution, DISTRIBUTION } from "../shared/buildConstants";
+import { IS_LITE } from "../shared/buildConstants";
 import { SidebarState } from "../shared/HubState";
 import LogFieldTree from "../shared/log/LogFieldTree";
 import LoggableType from "../shared/log/LoggableType";
@@ -136,7 +136,7 @@ export default class Sidebar {
     Array.from(menuBar.getElementsByTagName("button")).forEach((button, index) => {
       let active = false;
       button.addEventListener("click", () => {
-        if (active && DISTRIBUTION !== Distribution.Lite) {
+        if (active && !IS_LITE) {
           active = false;
           window.sendMainMessage("close-app-menu", {
             index: index
@@ -220,6 +220,18 @@ export default class Sidebar {
     this.TUNING_BUTTON.addEventListener("click", () => {
       this.setTuningModeActive(!this.isTuningMode);
     });
+    this.TUNING_BUTTON.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      let values = Object.keys(this.tuningValueCache)
+        .sort()
+        .map((key) => key + " = " + this.tuningValueCache[key])
+        .join("\n");
+      window.sendMainMessage("ask-open-tuning-context-menu", {
+        isTuningMode: this.isTuningMode,
+        values: values,
+        position: [event.clientX, event.clientY]
+      });
+    });
 
     // Periodic functions
     let periodic = () => {
@@ -288,6 +300,9 @@ export default class Sidebar {
         if (field.startsWith("/" + hiddenKey)) show = false;
         if (field.startsWith("NT:/" + hiddenKey)) show = false;
         if (field.startsWith("NT:/AdvantageKit/" + hiddenKey)) show = false;
+        if (field.startsWith("DS:/" + hiddenKey)) show = false;
+        if (field.includes("/" + hiddenKey + "/")) show = false;
+        if (field.endsWith("/" + hiddenKey)) show = false;
       });
       return show;
     });
@@ -339,7 +354,7 @@ export default class Sidebar {
     }
     let title: string;
     if (this.fieldCount === 0) {
-      title = "No data available";
+      title = "Open a log or connect to view data";
     } else {
       let runtime = range[1] - range[0];
       let runtimeUnit = "s";
@@ -432,10 +447,19 @@ export default class Sidebar {
 
       // Add new list
       let tree = window.log.getFieldTree();
-      let rootKeys = Object.keys(tree);
+      let rootKeys = Object.keys(tree).filter((x) => !x.startsWith("."));
       if (rootKeys.length === 1 && tree[rootKeys[0]].fullKey === null) {
         // If only one table, use it as the root
         tree = tree[rootKeys[0]].children;
+      }
+      // Repeat to use "DS:/Dscomm/" as the root if available
+      let secondaryRootKeys = Object.keys(tree).filter((x) => !x.startsWith("."));
+      if (
+        secondaryRootKeys.length === 1 &&
+        secondaryRootKeys[0] === "Dscomm" &&
+        tree[secondaryRootKeys[0]].fullKey === null
+      ) {
+        tree = tree[secondaryRootKeys[0]].children;
       }
       Object.keys(tree)
         .filter((key) => !this.HIDDEN_KEYS.includes(key))
@@ -726,6 +750,15 @@ export default class Sidebar {
         circle.setAttributeNS(null, "cx", "4.5");
         circle.setAttributeNS(null, "cy", "4.5");
         circle.setAttributeNS(null, "r", "4.5");
+        let line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        svg.appendChild(line);
+        line.setAttributeNS(null, "x1", "0");
+        line.setAttributeNS(null, "y1", "0");
+        line.setAttributeNS(null, "x2", "9");
+        line.setAttributeNS(null, "y2", "9");
+        line.setAttributeNS(null, "stroke-width", "2");
+        line.setAttributeNS(null, "stroke", "white");
+        line.setAttributeNS(null, "clip-path", "url(#booleanCircleClip)");
 
         // Update values periodically
         let firstUpdate = true;
@@ -746,6 +779,7 @@ export default class Sidebar {
           if (value !== null) {
             const darkMode = window.matchMedia("(prefers-color-scheme: dark)").matches;
             circle.setAttributeNS(null, "fill", value ? (darkMode ? "lightgreen" : "green") : "red");
+            line.style.display = value ? "none" : "initial";
           }
           let hidden = value === null;
           valueElement.hidden = hidden;
@@ -763,6 +797,7 @@ export default class Sidebar {
           let value = !oldValue;
           let liveTime = window.selection.getCurrentLiveTime();
           if (liveTime !== null) {
+            this.tuningValueCache[field.fullKey!] = value.toString();
             window.tuner?.publish(field.fullKey!, value);
             window.log.putBoolean(field.fullKey!, liveTime, value);
           }
@@ -773,6 +808,7 @@ export default class Sidebar {
             svg.classList.add("tunable");
           } else {
             svg.classList.remove("tunable");
+            delete this.tuningValueCache[field.fullKey!];
           }
         };
         this.setTuningModeActiveCallbacks.push(setTuningModeActive);
@@ -782,6 +818,7 @@ export default class Sidebar {
         numValueInput = document.createElement("input");
         numValueInput.hidden = true;
         numValueInput.type = "number";
+        numValueInput.title = "Set value";
         valueElement.appendChild(numValueInput);
         numValueSpan = document.createElement("span");
         valueElement.appendChild(numValueSpan);
@@ -971,12 +1008,10 @@ export default class Sidebar {
         // Add children if first time
         if (firstExpand) {
           firstExpand = false;
-          let childKeys = Object.keys(field.children);
+          let childKeys = Object.keys(field.children).filter((key) => !this.HIDDEN_KEYS.includes(key));
           if (fullTitle === "/AdvantageKit" || fullTitle === "/NT" || fullTitle.startsWith("/" + this.MERGED_KEY)) {
-            // Apply hidden and known keys
-            childKeys = childKeys
-              .filter((key) => !this.HIDDEN_KEYS.includes(key))
-              .sort((a, b) => this.sortKeys(a, b, true));
+            // Apply known keys sorting
+            childKeys = childKeys.sort((a, b) => this.sortKeys(a, b, true));
           } else {
             childKeys = childKeys.sort((a, b) => this.sortKeys(a, b));
           }

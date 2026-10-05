@@ -16,7 +16,7 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
     {
       key: "stepped",
       display: "Stepped",
-      symbol: "stairs",
+      symbol: "floor",
       showInTypeName: false,
       color: "color",
       sourceTypes: ["Number"],
@@ -52,7 +52,7 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
     {
       key: "smooth",
       display: "Smooth",
-      symbol: "scribble.variable",
+      symbol: "gesture",
       showInTypeName: false,
       color: "color",
       sourceTypes: ["Number"],
@@ -74,7 +74,6 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
             { key: "verybold", display: "Very Bold" }
           ]
         },
-
         {
           key: "AddFromLogs",
           display: "Add from all logs ",
@@ -89,7 +88,7 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
     {
       key: "points",
       display: "Points",
-      symbol: "smallcircle.filled.circle",
+      symbol: "scatterplot",
       showInTypeName: false,
       color: "color",
       sourceTypes: ["Number"],
@@ -101,16 +100,6 @@ export const LineGraphController_NumericConfig: SourceListConfig = {
           showInTypeName: false,
           values: GraphColors
         },
-        {
-          key: "size",
-          display: "Size",
-          showInTypeName: false,
-          values: [
-            { key: "normal", display: "Normal" },
-            { key: "bold", display: "Large" }
-          ]
-        },
-
         {
           key: "AddFromLogs",
           display: "Add from all logs ",
@@ -133,7 +122,7 @@ export const LineGraphController_DiscreteConfig: SourceListConfig = {
     {
       key: "stripes",
       display: "Stripes",
-      symbol: "square.stack.3d.forward.dottedline.fill",
+      symbol: "barcode",
       showInTypeName: false,
       color: "color",
       sourceTypes: ["Raw", "Boolean", "Number", "String", "BooleanArray", "NumberArray", "StringArray"],
@@ -159,7 +148,7 @@ export const LineGraphController_DiscreteConfig: SourceListConfig = {
     {
       key: "graph",
       display: "Graph",
-      symbol: "chart.xyaxis.line",
+      symbol: "earthquake",
       showInTypeName: false,
       color: "color",
       sourceTypes: ["Raw", "Boolean", "Number", "String", "BooleanArray", "NumberArray", "StringArray"],
@@ -185,7 +174,7 @@ export const LineGraphController_DiscreteConfig: SourceListConfig = {
     {
       key: "alerts",
       display: "Alerts",
-      symbol: "list.bullet",
+      symbol: "list",
       showInTypeName: false,
       color: "#ffaa00",
       sourceTypes: ["Alerts"],

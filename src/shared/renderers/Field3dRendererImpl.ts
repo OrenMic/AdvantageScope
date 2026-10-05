@@ -30,6 +30,8 @@ import RobotManager from "./field3d/objectManagers/RobotManager";
 import TrajectoryManager from "./field3d/objectManagers/TrajectoryManager";
 import ZoneManager from "./field3d/objectManagers/ZoneManager";
 
+export const FTC_GRID_COLOR = "#888";
+
 export default class Field3dRendererImpl implements TabRenderer {
   private LOWER_POWER_MAX_FPS = 30;
   private MAX_ORBIT_FOV = 160;
@@ -105,6 +107,7 @@ export default class Field3dRendererImpl implements TabRenderer {
   private dsCameraGroup: THREE.Group;
   private dsCameraObj: THREE.Object3D;
   private spotLights: THREE.SpotLight[] = [];
+  private FTCGrid: THREE.GridHelper | null = null;
 
   private objectManagers: {
     type: Field3dRendererCommand_AnyObj["type"];
@@ -270,12 +273,24 @@ export default class Field3dRendererImpl implements TabRenderer {
     // Create key bindings
     window.addEventListener("keydown", (event) => {
       if (window.platform === "darwin" ? event.metaKey : event.ctrlKey) return;
-      if (event.target !== document.body && event.target !== window) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
+      ) {
+        return;
+      }
       if (canvasContainer.clientHeight === 0) return;
       this.keysPressed.add(event.code);
     });
     window.addEventListener("keyup", (event) => {
-      if (event.target !== document.body && event.target !== window) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
+      ) {
+        return;
+      }
       this.keysPressed.delete(event.code);
     });
   }
@@ -337,6 +352,7 @@ export default class Field3dRendererImpl implements TabRenderer {
 
   /** Resets the camera position and controls target. */
   private resetCamera(command: Field3dRendererCommand, isFTC: boolean, animate = true) {
+    animate = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.controls.minDistance = isFTC ? this.CONTROLS_MIN_DISTANCE_FTC : this.CONTROLS_MIN_DISTANCE_FRC;
     if (this.cameraIndex === -1) {
       // Orbit field
@@ -684,6 +700,27 @@ export default class Field3dRendererImpl implements TabRenderer {
           }
         );
       }
+
+      // Reset the FTC grid.
+      if (this.FTCGrid !== null) {
+        this.wpilibCoordinateGroup.remove(this.FTCGrid);
+        this.FTCGrid.dispose();
+      }
+
+      // Create a new grid and render it if switching to an FTC field
+      if (fieldConfig.isFTC && fieldConfig.useGrid) {
+        // Create new grid.
+        this.FTCGrid = new THREE.GridHelper(
+          Units.convert(fieldConfig.widthInches, "inches", "meters"), // Size of field
+          6, // Six divisions to a standard FTC field
+          FTC_GRID_COLOR,
+          FTC_GRID_COLOR
+        );
+        this.FTCGrid.rotateX(Math.PI / 2);
+
+        this.wpilibCoordinateGroup.add(this.FTCGrid);
+      }
+
       this.lastIsFTC = fieldConfig.isFTC;
     }
     if (this.shouldLoadNewField && !this.isFieldLoading) {
@@ -738,7 +775,7 @@ export default class Field3dRendererImpl implements TabRenderer {
         newFieldReady();
       } else {
         this.isFieldLoading = true;
-        WorkerManager.request("../bundles/shared$loadField.js", {
+        WorkerManager.request("../bundles/loadField.js", {
           fieldConfig: fieldConfig,
           mode: this.mode,
           materialSpecular: this.MATERIAL_SPECULAR.toArray(),
@@ -828,7 +865,7 @@ export default class Field3dRendererImpl implements TabRenderer {
             components: [],
             mechanisms: { xz: null, yz: null },
             visionTargets: [],
-            swerveStates: []
+            swerveModuleVelocities: []
           });
         }
       }

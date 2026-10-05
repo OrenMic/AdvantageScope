@@ -16,13 +16,14 @@ import {
   SourceListTypeMemoryEntry
 } from "../shared/SourceListConfig";
 import {
-  grabChassisSpeeds,
+  grabModuleVelocities,
   grabPosesAuto,
-  grabSwerveStates,
+  grabRobotVelocities,
   rotation3dTo2d,
   rotation3dToRPY
 } from "../shared/geometry";
-import { getLogValueText, getMechanismState, getOrDefault } from "../shared/log/LogUtil";
+import { getMechanismState } from "../shared/log/LogMechanismState";
+import { getLogValueText, getOrDefault } from "../shared/log/LogUtil";
 import LoggableType from "../shared/log/LoggableType";
 import { Units } from "../shared/units";
 import { createUUID, jsonCopy } from "../shared/util";
@@ -89,25 +90,28 @@ export default class SourceList {
     this.EDIT_BUTTON = document.createElement("button");
     this.ROOT.appendChild(this.EDIT_BUTTON);
     this.EDIT_BUTTON.classList.add("edit");
+    this.EDIT_BUTTON.title = "Edit settings";
     let editIcon = document.createElement("img");
     this.EDIT_BUTTON.appendChild(editIcon);
-    editIcon.src = "symbols/ellipsis.svg";
+    editIcon.src = "symbols/morehoriz.svg";
     this.EDIT_BUTTON.hidden = editButtonCallback === undefined;
 
     this.CLEAR_BUTTON = document.createElement("button");
     this.ROOT.appendChild(this.CLEAR_BUTTON);
     this.CLEAR_BUTTON.classList.add("clear");
+    this.CLEAR_BUTTON.title = "Clear all fields";
     let clearButton = document.createElement("img");
     this.CLEAR_BUTTON.appendChild(clearButton);
-    clearButton.src = "symbols/trash.fill.svg";
+    clearButton.src = "symbols/delete.svg";
     this.CLEAR_BUTTON.hidden = editButtonCallback !== undefined;
 
     this.HELP_BUTTON = document.createElement("button");
     this.ROOT.appendChild(this.HELP_BUTTON);
     this.HELP_BUTTON.classList.add("help");
+    this.HELP_BUTTON.title = "Help";
     let helpIcon = document.createElement("img");
     this.HELP_BUTTON.appendChild(helpIcon);
-    helpIcon.src = "symbols/questionmark.circle.svg";
+    helpIcon.src = "symbols/help.svg";
     this.HELP_BUTTON.hidden = editButtonCallback !== undefined;
 
     this.LIST = document.createElement("div");
@@ -117,7 +121,7 @@ export default class SourceList {
     this.HAND_ICON = document.createElement("img");
     this.ROOT.appendChild(this.HAND_ICON);
     this.HAND_ICON.classList.add("hand-icon");
-    this.HAND_ICON.src = "symbols/rectangle.and.hand.point.up.left.filled.svg";
+    this.HAND_ICON.src = "symbols/trackpadinput.svg";
     this.updateHandIcon();
 
     this.DRAG_HIGHLIGHT = document.createElement("div");
@@ -398,16 +402,19 @@ export default class SourceList {
     this.HAND_ICON.style.opacity = show ? "0.15" : "0";
   }
 
-  /**
-   * Adds a new field to the list, if the type is valid.
-   *
-   * @param logKey The key for the field to add
-   * @param parentIndex The index of the parent item (optional)
-   */
-  addField(logKey: string, parentIndex?: number) {
+/**
+ * Adds a new field to the list, if the type is valid.
+ *
+ * @param logKey The key for the field to add
+ * @param option The optional configuration for the field to add
+ * @param option.parentIndex The index of the parent item (optional)
+ * @param option.type The type of the field to add (optional)
+ */
+  addField(logKey: string, option?: { parentIndex?: number; type?: string }) {
     let logType = window.log.getType(logKey);
     let logTypeString = logType === null ? null : LoggableType[logType];
     let structuredType = window.log.getStructuredType(logKey);
+    const parentIndex = option?.parentIndex;
 
     // Get memory entry
     let memory: SourceListTypeMemoryEntry | null = null;
@@ -488,7 +495,7 @@ export default class SourceList {
       }
     });
     let state: SourceListItemState = {
-      type: bestType.typeConfig.key,
+      type: option?.type || bestType.typeConfig.key,
       logKey: logKey,
       logType: bestType.logType,
       visible: true,
@@ -698,7 +705,7 @@ export default class SourceList {
       if (!typeValidAsChild) parentIndex = null;
       if (parentIndex !== null || typeValidAsRoot) {
         draggedFields.forEach((field) => {
-          this.addField(field, parentIndex === null ? undefined : parentIndex);
+          this.addField(field, { parentIndex: parentIndex === null ? undefined : parentIndex });
         });
       }
       Array.from(this.LIST.children).forEach((element) => {
@@ -748,6 +755,21 @@ export default class SourceList {
   /** Make a list item element and inserts it into the list. */
   private addListItem(state: SourceListItemState, insertIndex?: number) {
     let item = this.ITEM_TEMPLATE.cloneNode(true) as HTMLElement;
+    Array.from(item.getElementsByTagName("object")).forEach((objElement) => {
+      // Add a persistent load listener to re-apply the correct color.
+      // This is necessary because Safari may unload and reload the SVG when
+      // the element is detached or hidden (e.g. switching tabs).
+      objElement.addEventListener("load", () => {
+        let color = objElement.getAttribute("type-color");
+        if (color !== null && objElement.contentDocument !== null) {
+          let svgs = objElement.contentDocument.getElementsByTagName("svg");
+          if (svgs.length > 0) {
+            svgs[0].style.color = color;
+          }
+        }
+      });
+    });
+
     if (insertIndex === undefined) {
       this.LIST.appendChild(item);
       this.state.push(state);
@@ -764,6 +786,7 @@ export default class SourceList {
 
     // Type controls
     let typeButton = item.getElementsByClassName("type")[0] as HTMLButtonElement;
+    typeButton.title = "Edit field configuration";
     let typeNameElement = item.getElementsByClassName("type-name")[0] as HTMLElement;
     let promptType = (rect: ButtonRect) => {
       let index = Array.from(this.LIST.children).indexOf(item);
@@ -820,20 +843,8 @@ export default class SourceList {
       });
     });
 
-    // Warning button
-    let warningButton = item.getElementsByClassName("warning")[0] as HTMLButtonElement;
-    let enableWarning = typeConfig?.numberArrayDeprecated === true;
-    warningButton.hidden = !enableWarning;
-    let keyContainer = item.getElementsByClassName("key-container")[0] as HTMLElement;
-    keyContainer.style.setProperty("--has-warning", enableWarning ? "1" : "0");
-    warningButton.addEventListener("click", () => {
-      window.sendMainMessage("numeric-array-deprecation-warning", { force: true });
-    });
-    if (enableWarning) {
-      window.sendMainMessage("numeric-array-deprecation-warning", { force: false });
-    }
-
     // Hide button
+    let keyContainer = item.getElementsByClassName("key-container")[0] as HTMLElement;
     let hideButton = item.getElementsByClassName("hide")[0] as HTMLButtonElement;
     let toggleHidden = () => {
       let index = Array.from(this.LIST.children).indexOf(item);
@@ -889,6 +900,8 @@ export default class SourceList {
 
     // Remove button
     let removeButton = item.getElementsByClassName("remove")[0] as HTMLButtonElement;
+    removeButton.title = "Remove field";
+    let removeIcon = removeButton.firstElementChild as HTMLElement;
     removeButton.addEventListener("click", () => {
       let index = Array.from(this.LIST.children).indexOf(item);
       let removeCount = 0;
@@ -941,26 +954,29 @@ export default class SourceList {
       }
     }
     color = ensureThemeContrast(color);
+    typeIconVisible.setAttribute("type-color", color);
+    typeIconHidden.setAttribute("type-color", color);
+
     let dataPath = "symbols/sourceList/" + typeConfig.symbol + ".svg";
     if (dataPath !== typeIconVisible.getAttribute("data")) {
       // Load new image on hidden icon
       typeIconHidden.data = dataPath;
-      typeIconHidden.addEventListener("load", () => {
-        if (typeIconHidden.contentDocument) {
-          typeIconHidden.contentDocument.getElementsByTagName("svg")[0].style.color = color;
-          typeIconHidden.setAttribute("type-color", color);
-
-          typeIconHidden.classList.remove("hidden");
-          typeIconVisible.classList.add("hidden");
-        }
-      });
+      typeIconHidden.addEventListener(
+        "load",
+        () => {
+          if (typeIconHidden.contentDocument) {
+            typeIconHidden.classList.remove("hidden");
+            typeIconVisible.classList.add("hidden");
+          }
+        },
+        { once: true }
+      );
     } else if (typeIconVisible.contentDocument !== null) {
       // Replace color on visible icon
       let svgs = typeIconVisible.contentDocument.getElementsByTagName("svg");
       if (svgs.length > 0) {
         svgs[0].style.color = color;
       }
-      typeIconVisible.setAttribute("type-color", color);
     }
 
     // Update type name
@@ -1000,7 +1016,9 @@ export default class SourceList {
     // Update hide button
     let hideButton = item.getElementsByClassName("hide")[0] as HTMLButtonElement;
     let hideIcon = hideButton.firstElementChild as HTMLImageElement;
-    hideIcon.src = "symbols/" + (state.visible ? "eye.svg" : "eye.slash.svg");
+    hideIcon.src = "symbols/" + (state.visible ? "visibility.svg" : "visibilityoff.svg");
+    let titleText = state.visible ? "Hide field" : "Show field";
+    hideButton.title = titleText;
     if (state.visible) {
       item.classList.remove("hidden");
     } else {
@@ -1055,50 +1073,31 @@ export default class SourceList {
         if (value !== null || logType === LoggableType.Empty) {
           if (typeConfig?.previewType !== undefined) {
             if (typeConfig?.previewType !== null) {
-              let numberArrayFormat: "Translation2d" | "Translation3d" | "Pose2d" | "Pose3d" = "Pose3d";
-              let numberArrayUnits: "radians" | "degrees" = "radians";
-              if ("format" in state.options) {
-                let formatRaw = state.options.format;
-                numberArrayFormat =
-                  formatRaw === "Pose2d" ||
-                  formatRaw === "Pose3d" ||
-                  formatRaw === "Translation2d" ||
-                  formatRaw === "Translation3d"
-                    ? formatRaw
-                    : "Pose3d";
-              }
+              let numberRotationUnits: "radians" | "degrees" = "radians";
               if ("units" in state.options) {
-                numberArrayUnits = state.options.units === "degrees" ? "degrees" : "radians";
+                numberRotationUnits = state.options.units === "degrees" ? "degrees" : "radians";
               }
               let poseStrings: string[] = [];
-              if (typeConfig?.previewType === "SwerveModuleState[]") {
-                let swerveStates = grabSwerveStates(
-                  window.log,
-                  state.logKey,
-                  state.logType,
-                  time,
-                  undefined,
-                  numberArrayUnits,
-                  this.UUID
-                );
-                swerveStates.forEach((state) => {
+              if (typeConfig?.previewType === "ModuleVelocities") {
+                let moduleVelocities = grabModuleVelocities(window.log, state.logKey, time, undefined, this.UUID);
+                moduleVelocities.forEach((state) => {
                   poseStrings.push(
                     "\u03bd: " +
-                      state.speed.toFixed(2) +
+                      state.velocity.toFixed(2) +
                       "m/s, \u03b8: " +
                       Units.convert(state.angle, "radians", "degrees").toFixed(2) +
                       "\u00b0"
                   );
                 });
-              } else if (typeConfig?.previewType === "ChassisSpeeds") {
-                let chassisSpeeds = grabChassisSpeeds(window.log, state.logKey, time, this.UUID);
+              } else if (typeConfig?.previewType === "RobotVelocities") {
+                let robotVelocities = grabRobotVelocities(window.log, state.logKey, time, this.UUID);
                 poseStrings.push(
                   "\u03bdx: " +
-                    chassisSpeeds.vx.toFixed(2) +
+                    robotVelocities.vx.toFixed(2) +
                     "m/s, \u03bdy: " +
-                    chassisSpeeds.vy.toFixed(2) +
+                    robotVelocities.vy.toFixed(2) +
                     "m/s, \u03a9: " +
-                    Units.convert(chassisSpeeds.omega, "radians", "degrees").toFixed(2) +
+                    Units.convert(robotVelocities.omega, "radians", "degrees").toFixed(2) +
                     "\u00b0/s"
                 );
               } else {
@@ -1108,8 +1107,7 @@ export default class SourceList {
                   state.logType,
                   time,
                   this.UUID,
-                  numberArrayFormat,
-                  numberArrayUnits
+                  numberRotationUnits
                 );
                 poseStrings = poses.map((annotatedPose) => {
                   switch (typeConfig?.previewType) {

@@ -12,8 +12,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import WorkerManager from "../../../../hub/WorkerManager";
 import { AdvantageScopeAssets } from "../../../AdvantageScopeAssets";
-import { rotationSequenceToQuaternion, SwerveState } from "../../../geometry";
-import { MechanismState } from "../../../log/LogUtil";
+import { ModuleVelocity, rotationSequenceToQuaternion } from "../../../geometry";
+import { MechanismState } from "../../../log/LogMechanismState";
 import { Units } from "../../../units";
 import { transformPx } from "../../../util";
 import { Field3dRendererCommand_GhostObj, Field3dRendererCommand_RobotObj } from "../../Field3dRenderer";
@@ -69,7 +69,7 @@ export default class RobotManager extends ObjectManager<
   private hasNewAssets = false;
   private lastModel = "";
   private lastColor = "";
-  private lastHadSwerveStates = false;
+  private lastHadSwerveModuleVelocities = false;
   private lastHideRobotModels = false;
 
   constructor(
@@ -170,19 +170,11 @@ export default class RobotManager extends ObjectManager<
           const urlTransformer: (path: string) => string = (url) => "/asset?path=" + encodeURIComponent(url);
           const gltfLoader = new GLTFLoader();
           Promise.all([
-            new Promise((resolve) => {
-              gltfLoader.load(urlTransformer(robotConfig.path), resolve);
-            }),
-            ...robotConfig.components.map(
-              (_, index) =>
-                new Promise((resolve) => {
-                  gltfLoader.load(
-                    urlTransformer(robotConfig.path.slice(0, -4) + "_" + index.toString() + ".glb"),
-                    resolve
-                  );
-                })
+            gltfLoader.loadAsync(urlTransformer(robotConfig.path)),
+            ...robotConfig.components.map((_, index) =>
+              gltfLoader.loadAsync(urlTransformer(robotConfig.path.slice(0, -4) + "_" + index.toString() + ".glb"))
             )
-          ]).then(async (gltfs) => {
+          ]).then((gltfs) => {
             if (loadingCounter !== this.loadingCounter) {
               // Model was switched, throw away the data :(
               return;
@@ -267,7 +259,7 @@ export default class RobotManager extends ObjectManager<
           });
         } else {
           // Desktop, load models with worker and mesh merging
-          WorkerManager.request("../bundles/shared$loadRobot.js", {
+          WorkerManager.request("../bundles/loadRobot.js", {
             robotConfig: robotConfig!,
             isFTC: robotConfig.isFTC,
             mode: this.mode,
@@ -546,17 +538,17 @@ export default class RobotManager extends ObjectManager<
         ] as [number, number];
 
         // Draw module data
-        let drawModuleData = (state: SwerveState, color: string) => {
+        let drawModuleData = (state: ModuleVelocity, color: string) => {
           context.lineWidth = 0.03 * pxPerMeter;
           context.strokeStyle = color;
           context.lineCap = "round";
           context.lineJoin = "round";
 
           // Draw speed
-          if (Math.abs(state.speed) <= 0.001) return;
-          let vectorSpeed = state.speed / 5;
+          if (Math.abs(state.velocity) <= 0.001) return;
+          let vectorSpeed = state.velocity / 5;
           let vectorRotation = state.angle;
-          if (state.speed < 0) {
+          if (state.velocity < 0) {
             vectorSpeed *= -1;
             vectorRotation += Math.PI;
           }
@@ -580,15 +572,15 @@ export default class RobotManager extends ObjectManager<
           context.lineTo(...arrowRight);
           context.stroke();
         };
-        object.swerveStates.forEach((set) => {
+        object.swerveModuleVelocities.forEach((set) => {
           if (index < set.values.length) {
             drawModuleData(set.values[index], set.color);
           }
         });
       });
-      let hasSwerveStates = object.swerveStates.length > 0;
-      this.swerveTexture!.needsUpdate = hasSwerveStates || this.lastHadSwerveStates;
-      this.lastHadSwerveStates = hasSwerveStates;
+      let hasSwerveModuleVelocities = object.swerveModuleVelocities.length > 0;
+      this.swerveTexture!.needsUpdate = hasSwerveModuleVelocities || this.lastHadSwerveModuleVelocities;
+      this.lastHadSwerveModuleVelocities = hasSwerveModuleVelocities;
     }
   }
 }
