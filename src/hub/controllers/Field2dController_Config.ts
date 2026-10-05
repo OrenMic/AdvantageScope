@@ -215,7 +215,7 @@ const Field2dController_Config: SourceListConfig = {
     {
       key: "zone",
       display: "Zone",
-      symbol: "rectangle.dashed",
+      symbol: "join",
       showInTypeName: true,
       color: "color",
       sourceTypes: ["Rectangle2d", "Ellipse2d", "Rectangle2d[]", "Ellipse2d[]"],
