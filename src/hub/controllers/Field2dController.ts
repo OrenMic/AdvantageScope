@@ -10,12 +10,14 @@ import {
   AnnotatedPose2d,
   AnnotatedPose3d,
   ModuleVelocity,
+  Shape2d,
   Translation2d,
   annotatedPose3dTo2d,
   convertFromCoordinateSystem,
   grabHeatmapData,
   grabModuleVelocities,
   grabPosesAuto,
+  grabShapesAuto,
   rotation3dTo2d
 } from "../../shared/geometry";
 import { ALLIANCE_KEYS, getIsRedAlliance } from "../../shared/log/RobotState";
@@ -261,6 +263,37 @@ export default class Field2dController implements TabController {
       ) {
         i++;
         children.push(sources[i]);
+      }
+
+      // Zones use Rectangle2d/Ellipse2d structs rather than poses
+      if (source.type === "zone") {
+        let shapes: Shape2d[] = [];
+        if (time !== null) {
+          shapes = grabShapesAuto(window.log, source.logKey, source.logType, time, this.UUID);
+          if (fieldData !== undefined) {
+            shapes = shapes.map((shape) => ({
+              ...shape,
+              center: convertFromCoordinateSystem(
+                shape.center,
+                coordinateSystem,
+                isRedAlliance ? "red" : "blue",
+                fieldWidth,
+                fieldHeight
+              )
+            }));
+          }
+        }
+        let styleRaw = source.options.style;
+        let style: "outline" | "fill" | "both" =
+          styleRaw === "outline" || styleRaw === "fill" || styleRaw === "both" ? styleRaw : "both";
+        objects.push({
+          type: "zone",
+          color: source.options.color,
+          size: source.options.size,
+          style: style,
+          shapes: shapes
+        });
+        continue;
       }
 
       // Get pose data
